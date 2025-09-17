@@ -1,0 +1,52 @@
+pipeline {
+  agent any
+  parameters {
+    string(name: 'SOURCE_REPO', defaultValue: 'https://github.com/Aincrad-Flux/RType.git', description: 'URL du repository à cloner')
+    string(name: 'BRANCH', defaultValue: 'main', description: 'Branche à builder')
+    choice(name: 'BUILD_TYPE', choices: ['Debug', 'Release'], description: 'Type de build CMake')
+  }
+  environment {
+    CONAN_USER_HOME = "${WORKSPACE}/.conan"
+  }
+  options {
+    timestamps()
+    ansiColor('xterm')
+  }
+  stages {
+    stage('Checkout') {
+      steps {
+        git branch: params.BRANCH, url: params.SOURCE_REPO, credentialsId: 'github-https-token'
+      }
+    }
+    stage('Conan Profile') {
+      steps {
+        sh label: 'Configure Conan profile', script: '''
+          set -e
+          if ! command -v conan >/dev/null 2>&1; then
+            echo "Conan non installé (attendu sur l agent)."; exit 1
+          fi
+          conan profile detect --force
+          conan profile show default || true
+        '''
+      }
+    }
+    stage('Conan Install') {
+      steps {
+        sh label: 'Install dependencies', script: '''
+          set -e
+          mkdir -p build
+          cd build
+          conan install .. --build=missing -s build_type=${BUILD_TYPE}
+        '''
+      }
+    }
+  }
+  post {
+    success {
+      archiveArtifacts artifacts: 'build/**/conanbuildinfo.*', allowEmptyArchive: true
+    }
+    always {
+      cleanWs(cleanWhenAborted: true, deleteDirs: true)
+    }
+  }
+}
