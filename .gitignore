@@ -1,0 +1,108 @@
+# =====================
+# RType / C++ Project Git Ignore
+# =====================
+
+# --- Build dossiers (générés) ---
+/build/
+/build-*/
+**/CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+install_manifest.txt
+CTestTestfile.cmake
+Testing/
+Makefile
+# (Si vous gardez un Makefile manuel à la racine, supprimez la ligne ci‑dessus)
+
+# --- Fichiers de compilation intermédiaires ---
+*.o
+*.obj
+*.lo
+*.la
+*.Plo
+*.ppo
+*.pch
+*.ilk
+*.idb
+*.mod
+*.smod
+
+# --- Binaires / libs ---
+*.a
+*.lib
+*.la
+*.lo
+*.dll
+*.dylib
+*.so
+*.so.*
+*.exe
+*.out
+*.app
+
+# --- Debug / profiling ---
+*.dSYM/
+*.stackdump
+*.core
+core.
+vgcore.*
+
+# --- Logs / temporaires ---
+*.log
+*.trace
+*.tmp
+*.temp
+*.cache
+*.swp
+*.swo
+
+# --- Conan ---
+.conan/
+conanbuildinfo.*
+# conan.lock  # Dé-commentez si vous NE voulez PAS versionner le lockfile
+
+graph_info.json
+
+# --- Compilation database (optionnelle) ---
+compile_commands.json
+
+# --- Coverage ---
+*.gcno
+*.gcda
+*.gcov
+coverage/
+
+# --- IDE / éditeurs ---
+.vscode/
+.idea/
+*.code-workspace
+*.sublime-project
+*.sublime-workspace
+
+# --- CLion cmake build dirs ---
+cmake-build-*/
+
+# --- MacOS spécifiques ---
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# --- Thumbs / metadata ---
+Icon?
+._*
+
+# --- Archives / paquets ---
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.7z
+
+# --- Autres ---
+*.orig
+*.rej
+*~
+# Fichiers potentiellement générés par outils divers
+*.bak
+
+# Fin
