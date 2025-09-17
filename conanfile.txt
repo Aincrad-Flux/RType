@@ -1,0 +1,13 @@
+[requires]
+raylib/5.0
+asio/1.28.0
+
+[generators]
+CMakeDeps
+CMakeToolchain
+
+[layout]
+cmake_layout
+
+[options]
+raylib:shared=False
