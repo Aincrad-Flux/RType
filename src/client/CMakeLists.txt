@@ -7,7 +7,7 @@ target_include_directories(r-type_client PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 find_package(raylib REQUIRED)
 
 target_link_libraries(r-type_client
-    PRIVATE rtype_engine rtype_common raylib::raylib
+    PRIVATE rtype_engine rtype_common raylib
 )
 
 if (APPLE)

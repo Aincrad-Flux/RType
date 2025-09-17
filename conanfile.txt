@@ -1,5 +1,5 @@
 [requires]
-raylib/5.0
+raylib/5.5
 asio/1.28.0
 
 [generators]
@@ -9,5 +9,8 @@ CMakeToolchain
 [layout]
 cmake_layout
 
+[tool_requires]
+cmake/3.27.9
+
 [options]
-raylib:shared=False
+raylib/*:shared=False
