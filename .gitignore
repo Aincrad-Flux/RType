@@ -12,7 +12,8 @@ install_manifest.txt
 CTestTestfile.cmake
 Testing/
 Makefile
-# (Si vous gardez un Makefile manuel à la racine, supprimez la ligne ci‑dessus)
+r-type_server
+r-type_client
 
 # --- Fichiers de compilation intermédiaires ---
 *.o
