@@ -6,15 +6,19 @@ namespace rtype::server {
 UdpServer::UdpServer(unsigned short port)
     : socket_(io_, asio::ip::udp::endpoint(asio::ip::udp::v4(), port)) {}
 
-UdpServer::~UdpServer() { stop(); }
+UdpServer::~UdpServer() {
+    stop();
+    if (thread_.joinable()) thread_.join();
+}
 
 void UdpServer::start() {
     doReceive();
-    thread_ = std::jthread([this]{ io_.run(); });
+    thread_ = std::thread([this]{ io_.run(); });
 }
 
 void UdpServer::stop() {
     if (!io_.stopped()) io_.stop();
+    if (thread_.joinable()) thread_.join();
     if (socket_.is_open()) {
         asio::error_code ec; socket_.close(ec);
     }

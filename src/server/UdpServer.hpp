@@ -19,7 +19,7 @@ class UdpServer {
     asio::ip::udp::socket socket_;
     std::array<char, 2048> buffer_{};
     asio::ip::udp::endpoint remote_;
-    std::jthread thread_;
+  std::thread thread_;
 };
 
 }
