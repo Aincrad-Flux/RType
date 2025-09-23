@@ -47,5 +47,16 @@ run-client:
 	$(BUILD_DIR)/bin/r-type_client
 
 help:
-	@echo "Targets: build setup clean fclean re run-server run-client"
-	@echo "Vars: PRESET=Release|Debug (default Release)"
+    @echo "Available targets:"; \
+    echo "  build       : Install deps (Conan) + configure + build"; \
+    echo "  setup       : Install dependencies (tries auto-install, suggests sudo if needed)"; \
+    echo "  run-server  : Run server binary"; \
+    echo "  run-client  : Run client binary"; \
+    echo "  clean       : Remove build directory (incremental artifacts)"; \
+    echo "  fclean      : Full clean (build + lib directory + root binaries)"; \
+    echo "  re          : Rebuild from scratch (fclean + build)"; \
+    echo "Variables:"; \
+    echo "  PRESET=Release|Debug (default Release)"; \
+    echo "Ensure Conan 2 installed: pip install --user conan"; \
+    echo ""; \
+    echo "If setup fails with permission errors, run: sudo make setup-sudo";
