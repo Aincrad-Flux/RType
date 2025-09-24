@@ -2,6 +2,8 @@ CONAN ?= conan
 CMAKE ?= cmake
 BUILD_DIR ?= build
 PRESET ?= Release
+CONAN ?= conan
+
 
 .PHONY: all setup setup-sudo build clean fclean re run-server run-client configure help
 
