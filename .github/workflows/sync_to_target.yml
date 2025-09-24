@@ -1,0 +1,50 @@
+name: Sync to Target Repository
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_branch:
+        description: 'Source branch to sync'
+        default: 'main'
+        required: true
+      target_repo:
+        description: 'Target repository (e.g., org/repo)'
+        default: 'EpitechPGE3-2025/G-CPP-500-LIL-5-1-rtype-1'
+        required: true
+      target_branch:
+        description: 'Target branch to push to'
+        default: 'main'
+        required: true
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_branch }}
+          fetch-depth: 0
+
+      - name: Configure git user
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Push to target repository
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+          TARGET_REPO: ${{ inputs.target_repo }}
+          TARGET_BRANCH: ${{ inputs.target_branch }}
+        run: |
+          if [ -z "${GH_PAT}" ]; then
+            echo "GH_PAT secret is missing. Create a classic PAT with repo scope and add it as GH_PAT." >&2
+            exit 1
+          fi
+          git remote remove target 2>/dev/null || true
+          git remote add target https://${GH_PAT}@github.com/${TARGET_REPO}.git
+          git push target HEAD:${TARGET_BRANCH} --force
+
+
