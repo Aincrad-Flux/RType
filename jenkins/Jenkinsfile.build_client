@@ -29,22 +29,37 @@ pipeline {
             }
         }
 
-        stage('Install Dependencies (Conan)') {
+        stage('Install Dependencies') {
             steps {
                 sh 'make setup PRESET=${PRESET} | cat'
+            }
+        }
+
+        stage('Configure (CMake)') {
+            steps {
+                sh 'make configure PRESET=${PRESET} | cat'
+            }
+        }
+
+        stage('Build Client') {
+            steps {
+                sh 'cmake --build build --config ${PRESET} --target r-type_client | cat'
+            }
+        }
+
+        stage('List Artifacts') {
+            steps {
+                sh 'ls -la build/bin | cat || true'
             }
         }
     }
 
     post {
         success {
-            echo 'Dependencies installed successfully.'
+            echo 'Client built successfully.'
         }
         failure {
-            echo 'Dependency installation failed.'
-        }
-        always {
-            sh 'ls -la build | cat || true'
+            echo 'Client build failed.'
         }
     }
 }
