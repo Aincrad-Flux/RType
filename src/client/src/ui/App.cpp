@@ -20,6 +20,8 @@ void App::run() {
     const int screenHeight = 540;
     SetConfigFlags(FLAG_WINDOW_RESIZABLE);
     InitWindow(screenWidth, screenHeight, "R-Type Client");
+    // Prevent ESC from closing the whole window; we handle ESC ourselves
+    SetExitKey(KEY_NULL);
     SetTargetFPS(60);
 
     float t = 0.f;
@@ -38,7 +40,7 @@ void App::run() {
 
         switch (_screen) {
             case ScreenState::Menu: _screens.drawMenu(_screen); break;
-            case ScreenState::Singleplayer: _screens.drawSingleplayer(); break;
+            case ScreenState::Singleplayer: _screens.drawSingleplayer(_screen, _singleForm); break;
             case ScreenState::Multiplayer: _screens.drawMultiplayer(_screen, _form); break;
             case ScreenState::Options: _screens.drawOptions(); break;
             case ScreenState::Leaderboard: _screens.drawLeaderboard(); break;

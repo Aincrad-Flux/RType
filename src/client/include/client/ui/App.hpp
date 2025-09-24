@@ -11,6 +11,7 @@ public:
 private:
     ScreenState _screen;
     MultiplayerForm _form;
+    SingleplayerForm _singleForm;
     Screens _screens;
 };
 
