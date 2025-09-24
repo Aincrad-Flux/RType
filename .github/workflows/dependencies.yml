@@ -40,11 +40,12 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-conan2-
 
-      - name: Conan install (PRESET=Release)
+      - name: Conan install (PRESET=Release) with sudo
         env:
           PRESET: Release
         run: |
-          make setup PRESET=${PRESET} | cat
+          sudo --preserve-env=HOME,PRESET -E make setup PRESET=${PRESET} | cat
+          sudo chown -R "$USER":"$USER" build || true
 
       - name: List build folder
         run: |

@@ -42,8 +42,10 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-conan2-
 
-      - name: Install dependencies (Conan)
-        run: make setup PRESET=${PRESET} | cat
+      - name: Install dependencies (Conan) with sudo
+        run: |
+          sudo --preserve-env=HOME,PRESET -E make setup PRESET=${PRESET} | cat
+          sudo chown -R "$USER":"$USER" build || true
 
       - name: Configure (CMake)
         run: make configure PRESET=${PRESET} | cat
