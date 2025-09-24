@@ -1,8 +1,14 @@
 add_executable(r-type_client
-    main.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/App.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/Widgets.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/Screens.cpp
 )
 
-target_include_directories(r-type_client PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(r-type_client PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
 
 find_package(raylib REQUIRED)
 
