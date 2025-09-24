@@ -4,9 +4,11 @@
 namespace rtype::server {
 
 UdpServer::UdpServer(unsigned short port, std::size_t threadCount)
-    : socket_(io_, asio::ip::udp::endpoint(asio::ip::udp::v4(), port))
+    : workGuard_(asio::make_work_guard(io_)),
+      socket_(io_, asio::ip::udp::endpoint(asio::ip::udp::v4(), port)),
+      threadCount_(threadCount)
 {
-    workers_.reserve(threadCount);
+    workers_.reserve(threadCount_);
 }
 
 UdpServer::~UdpServer() {
@@ -26,7 +28,10 @@ void UdpServer::start() {
     }
 }
 
+
 void UdpServer::stop() {
+    workGuard_.reset();
+
     if (!io_.stopped())
         io_.stop();
 
@@ -34,6 +39,7 @@ void UdpServer::stop() {
         asio::error_code ec;
         socket_.close(ec);
     }
+
     workers_.clear(); // joins all jthreads
 }
 
@@ -43,10 +49,10 @@ void UdpServer::doReceive() {
         [this](std::error_code ec, std::size_t n) {
             if (!ec && n > 0) {
                 doSend(remote_, buffer_.data(), n); // echo
+            } else if (ec) {
+                std::cerr << "Receive error: " << ec.message() << "\n";
             }
-            if (!ec) {
-                doReceive();
-            }
+            doReceive();
         }
     );
 }

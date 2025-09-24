@@ -23,6 +23,7 @@ class UdpServer {
     std::array<char, 2048> buffer_{};
     asio::ip::udp::endpoint remote_;
     std::vector<std::jthread> workers_;
+    std::size_t threadCount_;
 };
 
 }
