@@ -19,10 +19,14 @@ struct MultiplayerForm {
     std::string serverPort;
 };
 
+struct SingleplayerForm {
+    std::string username;
+};
+
 class Screens {
 public:
     void drawMenu(ScreenState& screen);
-    void drawSingleplayer();
+    void drawSingleplayer(ScreenState& screen, SingleplayerForm& form);
     void drawMultiplayer(ScreenState& screen, MultiplayerForm& form);
     void drawOptions();
     void drawLeaderboard();
