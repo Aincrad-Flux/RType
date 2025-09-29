@@ -2,6 +2,7 @@
 #include "../../include/client/ui/Widgets.hpp"
 #include <raylib.h>
 #include <asio.hpp>
+#include <iostream>
 #include <vector>
 #include <cstring>
 #include "common/Protocol.hpp"
@@ -13,6 +14,14 @@ static int baseFontFromHeight(int h) {
     int baseFont = (int)(h * 0.045f);
     if (baseFont < 16) baseFont = 16;
     return baseFont;
+}
+
+// Logger utilitaire
+void Screens::logMessage(const std::string& msg, const char* level) {
+    if (level)
+        std::cout << "[" << level << "] " << msg << std::endl;
+    else
+        std::cout << "[INFO] " << msg << std::endl;
 }
 
 void Screens::drawMenu(ScreenState& screen) {
@@ -108,8 +117,7 @@ void Screens::drawMultiplayer(ScreenState& screen, MultiplayerForm& form) {
     Color connectHover = canConnect ? (Color){150, 230, 150, 255} : (Color){90, 140, 90, 255};
     if (button({(float)btnX, (float)btnY, (float)btnWidth, (float)btnHeight}, "Connect", baseFont, BLACK, connectBg, connectHover)) {
         if (canConnect) {
-            TraceLog(LOG_INFO, "Connecting to %s:%s as %s", form.serverAddress.c_str(), form.serverPort.c_str(), form.username.c_str());
-            // Perform a simple UDP handshake synchronously
+            logMessage("Connecting to " + form.serverAddress + ":" + form.serverPort + " as " + form.username, "INFO");
             try {
                 asio::io_context io;
                 asio::ip::udp::socket sock(io);
@@ -126,6 +134,7 @@ void Screens::drawMultiplayer(ScreenState& screen, MultiplayerForm& form) {
                 std::memcpy(out.data(), &hdr, sizeof(hdr));
                 std::memcpy(out.data() + sizeof(hdr), form.username.data(), form.username.size());
 
+                logMessage("Sending Hello packet (" + std::to_string(out.size()) + " bytes) to server.", "INFO");
                 sock.send_to(asio::buffer(out), endpoint);
 
                 // Set a short timeout
@@ -138,15 +147,26 @@ void Screens::drawMultiplayer(ScreenState& screen, MultiplayerForm& form) {
                     asio::error_code ec;
                     std::size_t n = sock.receive_from(asio::buffer(in), from, 0, ec);
                     if (!ec && n >= sizeof(rtype::net::Header)) {
+                        logMessage("Received " + std::to_string(n) + " bytes from server.", "INFO");
                         auto* rh = reinterpret_cast<rtype::net::Header*>(in.data());
                         if (rh->version == rtype::net::ProtocolVersion && rh->type == rtype::net::MsgType::HelloAck) {
+                            logMessage("Received HelloAck from server.", "INFO");
                             ok = true;
                             break;
+                        } else {
+                            logMessage("Received packet but not HelloAck (type=" + std::to_string(static_cast<int>(rh->type)) + ")", "WARN");
                         }
+                    } else if (ec && ec != asio::error::would_block) {
+                        logMessage(std::string("Receive error: ") + ec.message(), "ERROR");
                     }
                 }
+                if (ok)
+                    logMessage("Player Connected.", "INFO");
+                else
+                    logMessage("Connection failed (no HelloAck).", "ERROR");
                 _statusMessage = ok ? std::string("Player Connected.") : std::string("Connection failed.");
             } catch (const std::exception& e) {
+                logMessage(std::string("Exception: ") + e.what(), "ERROR");
                 _statusMessage = std::string("Error: ") + e.what();
             }
         }
