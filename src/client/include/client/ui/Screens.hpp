@@ -32,6 +32,7 @@ public:
     void drawLeaderboard();
 private:
     int _focusedField = 0; // 0=user, 1=addr, 2=port
+    std::string _statusMessage;
 };
 
 } // namespace ui

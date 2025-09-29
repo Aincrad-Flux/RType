@@ -1,6 +1,10 @@
 #include "../../include/client/ui/Screens.hpp"
 #include "../../include/client/ui/Widgets.hpp"
 #include <raylib.h>
+#include <asio.hpp>
+#include <vector>
+#include <cstring>
+#include "common/Protocol.hpp"
 
 namespace client {
 namespace ui {
@@ -105,11 +109,53 @@ void Screens::drawMultiplayer(ScreenState& screen, MultiplayerForm& form) {
     if (button({(float)btnX, (float)btnY, (float)btnWidth, (float)btnHeight}, "Connect", baseFont, BLACK, connectBg, connectHover)) {
         if (canConnect) {
             TraceLog(LOG_INFO, "Connecting to %s:%s as %s", form.serverAddress.c_str(), form.serverPort.c_str(), form.username.c_str());
-            screen = ScreenState::Menu;
+            // Perform a simple UDP handshake synchronously
+            try {
+                asio::io_context io;
+                asio::ip::udp::socket sock(io);
+                sock.open(asio::ip::udp::v4());
+                asio::ip::udp::resolver resolver(io);
+                asio::ip::udp::endpoint endpoint = *resolver.resolve(asio::ip::udp::v4(), form.serverAddress, form.serverPort).begin();
+
+                // Build Hello packet with username payload
+                rtype::net::Header hdr{};
+                hdr.version = rtype::net::ProtocolVersion;
+                hdr.type = rtype::net::MsgType::Hello;
+                hdr.size = static_cast<std::uint16_t>(form.username.size());
+                std::vector<char> out(sizeof(rtype::net::Header) + form.username.size());
+                std::memcpy(out.data(), &hdr, sizeof(hdr));
+                std::memcpy(out.data() + sizeof(hdr), form.username.data(), form.username.size());
+
+                sock.send_to(asio::buffer(out), endpoint);
+
+                // Set a short timeout
+                sock.non_blocking(true);
+                asio::ip::udp::endpoint from;
+                std::array<char, 1024> in{};
+                double start = GetTime();
+                bool ok = false;
+                while (GetTime() - start < 1.0) {
+                    asio::error_code ec;
+                    std::size_t n = sock.receive_from(asio::buffer(in), from, 0, ec);
+                    if (!ec && n >= sizeof(rtype::net::Header)) {
+                        auto* rh = reinterpret_cast<rtype::net::Header*>(in.data());
+                        if (rh->version == rtype::net::ProtocolVersion && rh->type == rtype::net::MsgType::HelloAck) {
+                            ok = true;
+                            break;
+                        }
+                    }
+                }
+                _statusMessage = ok ? std::string("Player Connected.") : std::string("Connection failed.");
+            } catch (const std::exception& e) {
+                _statusMessage = std::string("Error: ") + e.what();
+            }
         }
     }
     if (button({(float)(btnX + btnWidth + btnGap), (float)btnY, (float)btnWidth, (float)btnHeight}, "Back", baseFont, BLACK, LIGHTGRAY, GRAY)) {
         screen = ScreenState::Menu;
+    }
+    if (!_statusMessage.empty()) {
+        titleCentered(_statusMessage.c_str(), (int)(h * 0.85f), baseFont, RAYWHITE);
     }
 }
 
