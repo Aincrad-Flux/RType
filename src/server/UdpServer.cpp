@@ -1,4 +1,5 @@
 #include "UdpServer.hpp"
+#include "../../common/Protocol.hpp"
 #include <iostream>
 
 namespace rtype::server {
@@ -28,14 +29,26 @@ void UdpServer::doReceive() {
     socket_.async_receive_from(
         asio::buffer(buffer_), remote_,
         [this](std::error_code ec, std::size_t n) {
-            if (!ec && n > 0) {
+            if (!ec && n >= sizeof(rtype::net::Header)) {
                 // Log reception
                 std::cout << "[RECV] From " << remote_.address().to_string() << ":" << remote_.port() << " (" << n << " bytes): ";
                 for (size_t i = 0; i < n; ++i) {
                     printf("%02x", static_cast<unsigned char>(buffer_[i]));
                 }
                 std::cout << std::endl;
-                doSend(remote_, buffer_.data(), n); // echo
+
+                // Analyse du header
+                auto* header = reinterpret_cast<rtype::net::Header*>(buffer_.data());
+                if (header->type == rtype::net::MsgType::Hello) {
+                    // Préparer HelloAck
+                    rtype::net::Header ackHeader;
+                    ackHeader.size = 0;
+                    ackHeader.type = rtype::net::MsgType::HelloAck;
+                    ackHeader.version = rtype::net::ProtocolVersion;
+                    doSend(remote_, &ackHeader, sizeof(ackHeader));
+                } else {
+                    doSend(remote_, buffer_.data(), n); // echo pour les autres paquets
+                }
             }
             if (!ec) doReceive();
         }
