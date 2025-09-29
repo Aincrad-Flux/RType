@@ -29,6 +29,12 @@ void UdpServer::doReceive() {
         asio::buffer(buffer_), remote_,
         [this](std::error_code ec, std::size_t n) {
             if (!ec && n > 0) {
+                // Log reception
+                std::cout << "[RECV] From " << remote_.address().to_string() << ":" << remote_.port() << " (" << n << " bytes): ";
+                for (size_t i = 0; i < n; ++i) {
+                    printf("%02x", static_cast<unsigned char>(buffer_[i]));
+                }
+                std::cout << std::endl;
                 doSend(remote_, buffer_.data(), n); // echo
             }
             if (!ec) doReceive();
@@ -38,6 +44,12 @@ void UdpServer::doReceive() {
 
 void UdpServer::doSend(const asio::ip::udp::endpoint& to, const void* data, std::size_t size) {
     auto buf = std::make_shared<std::vector<char>>(static_cast<const char*>(data), static_cast<const char*>(data)+size);
+    // Log envoi
+    std::cout << "[SEND] To " << to.address().to_string() << ":" << to.port() << " (" << size << " bytes): ";
+    for (size_t i = 0; i < size; ++i) {
+        printf("%02x", static_cast<unsigned char>((*buf)[i]));
+    }
+    std::cout << std::endl;
     socket_.async_send_to(asio::buffer(*buf), to,
         [buf](std::error_code, std::size_t){});
 }
