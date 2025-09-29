@@ -6,6 +6,7 @@ namespace rtype::net {
 
 enum class MsgType : std::uint8_t {
     Hello = 1,
+    HelloAck,
     Input,
     State,
     Spawn,
