@@ -3,7 +3,7 @@ CMAKE ?= cmake
 BUILD_DIR ?= build
 PRESET ?= Release
 
-.PHONY: all setup setup-sudo build clean fclean re run-server run-client configure help
+.PHONY: all setup setup-sudo build build-client build-server clean fclean re run-server run-client configure help
 
 all: build
 
@@ -32,6 +32,8 @@ setup-sudo:
 help:
 	@echo "Available targets:"; \
 	echo "  build       : Install deps (Conan) + configure + build"; \
+	echo "  build-client: Build only the client target"; \
+	echo "  build-server: Build only the server target"; \
 	echo "  setup       : Install dependencies (tries auto-install, suggests sudo if needed)"; \
 	echo "  setup-sudo  : Install dependencies with sudo privileges"; \
 	echo "  run-server  : Run server binary"; \
@@ -56,6 +58,12 @@ configure:
 
 build: setup configure
 	$(CMAKE) --build $(BUILD_DIR) --config $(PRESET)
+
+build-client: setup configure
+	$(CMAKE) --build $(BUILD_DIR) --config $(PRESET) --target r-type_client
+
+build-server: setup configure
+	$(CMAKE) --build $(BUILD_DIR) --config $(PRESET) --target r-type_server
 
 clean:
 	rm -rf $(BUILD_DIR)
