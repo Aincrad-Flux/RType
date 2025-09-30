@@ -2,6 +2,7 @@
 #include "../../include/client/ui/Widgets.hpp"
 #include <raylib.h>
 #include <asio.hpp>
+#include <memory>
 #include <iostream>
 #include <vector>
 #include <cstring>
@@ -9,6 +10,14 @@
 
 namespace client {
 namespace ui {
+
+namespace {
+    struct UdpClientGlobals {
+        std::unique_ptr<asio::io_context> io;
+        std::unique_ptr<asio::ip::udp::socket> sock;
+        asio::ip::udp::endpoint server;
+    } g;
+}
 
 static int baseFontFromHeight(int h) {
     int baseFont = (int)(h * 0.045f);
@@ -119,42 +128,28 @@ void Screens::drawMultiplayer(ScreenState& screen, MultiplayerForm& form) {
         if (canConnect) {
             logMessage("Connecting to " + form.serverAddress + ":" + form.serverPort + " as " + form.username, "INFO");
             try {
-                asio::io_context io;
-                asio::ip::udp::socket sock(io);
-                sock.open(asio::ip::udp::v4());
-                asio::ip::udp::resolver resolver(io);
-                asio::ip::udp::endpoint endpoint = *resolver.resolve(asio::ip::udp::v4(), form.serverAddress, form.serverPort).begin();
+                // Store connection params
+                _username = form.username;
+                _serverAddr = form.serverAddress;
+                _serverPort = form.serverPort;
 
-                // Build Hello packet with username payload
-                rtype::net::Header hdr{};
-                hdr.version = rtype::net::ProtocolVersion;
-                hdr.type = rtype::net::MsgType::Hello;
-                hdr.size = static_cast<std::uint16_t>(form.username.size());
-                std::vector<char> out(sizeof(rtype::net::Header) + form.username.size());
-                std::memcpy(out.data(), &hdr, sizeof(hdr));
-                std::memcpy(out.data() + sizeof(hdr), form.username.data(), form.username.size());
+                // Ensure a persistent UDP socket is created and send Hello once
+                teardownNet();
+                ensureNetSetup();
 
-                logMessage("Sending Hello packet (" + std::to_string(out.size()) + " bytes) to server.", "INFO");
-                sock.send_to(asio::buffer(out), endpoint);
-
-                // Set a short timeout
-                sock.non_blocking(true);
-                asio::ip::udp::endpoint from;
-                std::array<char, 1024> in{};
+                // Wait briefly for HelloAck on the same socket
                 double start = GetTime();
                 bool ok = false;
                 while (GetTime() - start < 1.0) {
+                    asio::ip::udp::endpoint from;
+                    std::array<char, 1024> in{};
                     asio::error_code ec;
-                    std::size_t n = sock.receive_from(asio::buffer(in), from, 0, ec);
+                    std::size_t n = g.sock->receive_from(asio::buffer(in), from, 0, ec);
                     if (!ec && n >= sizeof(rtype::net::Header)) {
-                        logMessage("Received " + std::to_string(n) + " bytes from server.", "INFO");
                         auto* rh = reinterpret_cast<rtype::net::Header*>(in.data());
                         if (rh->version == rtype::net::ProtocolVersion && rh->type == rtype::net::MsgType::HelloAck) {
-                            logMessage("Received HelloAck from server.", "INFO");
                             ok = true;
                             break;
-                        } else {
-                            logMessage("Received packet but not HelloAck (type=" + std::to_string(static_cast<int>(rh->type)) + ")", "WARN");
                         }
                     } else if (ec && ec != asio::error::would_block) {
                         logMessage(std::string("Receive error: ") + ec.message(), "ERROR");
@@ -163,16 +158,15 @@ void Screens::drawMultiplayer(ScreenState& screen, MultiplayerForm& form) {
                 if (ok) {
                     _statusMessage = std::string("Player Connected.");
                     _connected = true;
-                    _username = form.username;
-                    _serverAddr = form.serverAddress;
-                    _serverPort = form.serverPort;
                     screen = ScreenState::Gameplay;
                 } else {
                     _statusMessage = std::string("Connection failed.");
+                    teardownNet();
                 }
             } catch (const std::exception& e) {
                 logMessage(std::string("Exception: ") + e.what(), "ERROR");
                 _statusMessage = std::string("Error: ") + e.what();
+                teardownNet();
             }
         }
     }
@@ -199,13 +193,6 @@ void Screens::drawLeaderboard() {
 }
 
 // --- Minimal gameplay networking and rendering ---
-namespace {
-    struct UdpClientGlobals {
-        std::unique_ptr<asio::io_context> io;
-        std::unique_ptr<asio::ip::udp::socket> sock;
-        asio::ip::udp::endpoint server;
-    } g;
-}
 
 void Screens::ensureNetSetup() {
     if (g.io) return;
