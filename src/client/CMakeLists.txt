@@ -11,9 +11,10 @@ target_include_directories(r-type_client PRIVATE
 )
 
 find_package(raylib REQUIRED)
+find_package(asio REQUIRED)
 
 target_link_libraries(r-type_client
-    PRIVATE rtype_engine rtype_common raylib
+    PRIVATE rtype_engine rtype_common raylib asio::asio
 )
 
 if (APPLE)

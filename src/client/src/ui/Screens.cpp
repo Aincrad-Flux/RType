@@ -1,6 +1,11 @@
 #include "../../include/client/ui/Screens.hpp"
 #include "../../include/client/ui/Widgets.hpp"
 #include <raylib.h>
+#include <asio.hpp>
+#include <iostream>
+#include <vector>
+#include <cstring>
+#include "common/Protocol.hpp"
 
 namespace client {
 namespace ui {
@@ -9,6 +14,14 @@ static int baseFontFromHeight(int h) {
     int baseFont = (int)(h * 0.045f);
     if (baseFont < 16) baseFont = 16;
     return baseFont;
+}
+
+// Logger utilitaire
+void Screens::logMessage(const std::string& msg, const char* level) {
+    if (level)
+        std::cout << "[" << level << "] " << msg << std::endl;
+    else
+        std::cout << "[INFO] " << msg << std::endl;
 }
 
 void Screens::drawMenu(ScreenState& screen) {
@@ -104,12 +117,70 @@ void Screens::drawMultiplayer(ScreenState& screen, MultiplayerForm& form) {
     Color connectHover = canConnect ? (Color){150, 230, 150, 255} : (Color){90, 140, 90, 255};
     if (button({(float)btnX, (float)btnY, (float)btnWidth, (float)btnHeight}, "Connect", baseFont, BLACK, connectBg, connectHover)) {
         if (canConnect) {
-            TraceLog(LOG_INFO, "Connecting to %s:%s as %s", form.serverAddress.c_str(), form.serverPort.c_str(), form.username.c_str());
-            screen = ScreenState::Menu;
+            logMessage("Connecting to " + form.serverAddress + ":" + form.serverPort + " as " + form.username, "INFO");
+            try {
+                asio::io_context io;
+                asio::ip::udp::socket sock(io);
+                sock.open(asio::ip::udp::v4());
+                asio::ip::udp::resolver resolver(io);
+                asio::ip::udp::endpoint endpoint = *resolver.resolve(asio::ip::udp::v4(), form.serverAddress, form.serverPort).begin();
+
+                // Build Hello packet with username payload
+                rtype::net::Header hdr{};
+                hdr.version = rtype::net::ProtocolVersion;
+                hdr.type = rtype::net::MsgType::Hello;
+                hdr.size = static_cast<std::uint16_t>(form.username.size());
+                std::vector<char> out(sizeof(rtype::net::Header) + form.username.size());
+                std::memcpy(out.data(), &hdr, sizeof(hdr));
+                std::memcpy(out.data() + sizeof(hdr), form.username.data(), form.username.size());
+
+                logMessage("Sending Hello packet (" + std::to_string(out.size()) + " bytes) to server.", "INFO");
+                sock.send_to(asio::buffer(out), endpoint);
+
+                // Set a short timeout
+                sock.non_blocking(true);
+                asio::ip::udp::endpoint from;
+                std::array<char, 1024> in{};
+                double start = GetTime();
+                bool ok = false;
+                while (GetTime() - start < 1.0) {
+                    asio::error_code ec;
+                    std::size_t n = sock.receive_from(asio::buffer(in), from, 0, ec);
+                    if (!ec && n >= sizeof(rtype::net::Header)) {
+                        logMessage("Received " + std::to_string(n) + " bytes from server.", "INFO");
+                        auto* rh = reinterpret_cast<rtype::net::Header*>(in.data());
+                        if (rh->version == rtype::net::ProtocolVersion && rh->type == rtype::net::MsgType::HelloAck) {
+                            logMessage("Received HelloAck from server.", "INFO");
+                            ok = true;
+                            break;
+                        } else {
+                            logMessage("Received packet but not HelloAck (type=" + std::to_string(static_cast<int>(rh->type)) + ")", "WARN");
+                        }
+                    } else if (ec && ec != asio::error::would_block) {
+                        logMessage(std::string("Receive error: ") + ec.message(), "ERROR");
+                    }
+                }
+                if (ok) {
+                    _statusMessage = std::string("Player Connected.");
+                    _connected = true;
+                    _username = form.username;
+                    _serverAddr = form.serverAddress;
+                    _serverPort = form.serverPort;
+                    screen = ScreenState::Gameplay;
+                } else {
+                    _statusMessage = std::string("Connection failed.");
+                }
+            } catch (const std::exception& e) {
+                logMessage(std::string("Exception: ") + e.what(), "ERROR");
+                _statusMessage = std::string("Error: ") + e.what();
+            }
         }
     }
     if (button({(float)(btnX + btnWidth + btnGap), (float)btnY, (float)btnWidth, (float)btnHeight}, "Back", baseFont, BLACK, LIGHTGRAY, GRAY)) {
         screen = ScreenState::Menu;
+    }
+    if (!_statusMessage.empty()) {
+        titleCentered(_statusMessage.c_str(), (int)(h * 0.85f), baseFont, RAYWHITE);
     }
 }
 
@@ -125,6 +196,130 @@ void Screens::drawLeaderboard() {
     int baseFont = baseFontFromHeight(h);
     titleCentered("Leaderboard", (int)(h * 0.10f), (int)(h * 0.08f), RAYWHITE);
     titleCentered("Coming soon... Press ESC to go back.", (int)(h * 0.50f), baseFont, RAYWHITE);
+}
+
+// --- Minimal gameplay networking and rendering ---
+namespace {
+    struct UdpClientGlobals {
+        std::unique_ptr<asio::io_context> io;
+        std::unique_ptr<asio::ip::udp::socket> sock;
+        asio::ip::udp::endpoint server;
+    } g;
+}
+
+void Screens::ensureNetSetup() {
+    if (g.io) return;
+    g.io = std::make_unique<asio::io_context>();
+    g.sock = std::make_unique<asio::ip::udp::socket>(*g.io);
+    g.sock->open(asio::ip::udp::v4());
+    asio::ip::udp::resolver resolver(*g.io);
+    g.server = *resolver.resolve(asio::ip::udp::v4(), _serverAddr, _serverPort).begin();
+    g.sock->non_blocking(true);
+    // Re-send Hello on gameplay entry so server registers this endpoint for state
+    rtype::net::Header hdr{};
+    hdr.version = rtype::net::ProtocolVersion;
+    hdr.type = rtype::net::MsgType::Hello;
+    hdr.size = static_cast<std::uint16_t>(_username.size());
+    std::vector<char> out(sizeof(rtype::net::Header) + _username.size());
+    std::memcpy(out.data(), &hdr, sizeof(hdr));
+    if (!_username.empty()) std::memcpy(out.data() + sizeof(hdr), _username.data(), _username.size());
+    g.sock->send_to(asio::buffer(out), g.server);
+}
+
+void Screens::teardownNet() {
+    if (g.sock && g.sock->is_open()) {
+        asio::error_code ec; g.sock->close(ec);
+    }
+    g.sock.reset();
+    g.io.reset();
+}
+
+void Screens::sendInput(std::uint8_t bits) {
+    if (!g.sock) return;
+    rtype::net::Header hdr{};
+    hdr.version = rtype::net::ProtocolVersion;
+    hdr.type = rtype::net::MsgType::Input;
+    rtype::net::InputPacket ip{}; ip.sequence = 0; ip.bits = bits;
+    hdr.size = sizeof(ip);
+    std::array<char, sizeof(hdr) + sizeof(ip)> buf{};
+    std::memcpy(buf.data(), &hdr, sizeof(hdr));
+    std::memcpy(buf.data() + sizeof(hdr), &ip, sizeof(ip));
+    g.sock->send_to(asio::buffer(buf), g.server);
+}
+
+void Screens::pumpNetworkOnce() {
+    if (!g.sock) return;
+    asio::ip::udp::endpoint from;
+    std::array<char, 8192> in{};
+    asio::error_code ec;
+    std::size_t n = g.sock->receive_from(asio::buffer(in), from, 0, ec);
+    if (ec || n < sizeof(rtype::net::Header)) return;
+    auto* h = reinterpret_cast<const rtype::net::Header*>(in.data());
+    if (h->version != rtype::net::ProtocolVersion) return;
+    if (h->type != rtype::net::MsgType::State) return;
+    const char* p = in.data() + sizeof(rtype::net::Header);
+    if (n < sizeof(rtype::net::Header) + sizeof(rtype::net::StateHeader)) return;
+    auto* sh = reinterpret_cast<const rtype::net::StateHeader*>(p);
+    p += sizeof(rtype::net::StateHeader);
+    std::size_t count = sh->count;
+    if (n < sizeof(rtype::net::Header) + sizeof(rtype::net::StateHeader) + count * sizeof(rtype::net::PackedEntity)) return;
+    _entities.clear();
+    _entities.reserve(count);
+    auto* arr = reinterpret_cast<const rtype::net::PackedEntity*>(p);
+    for (std::size_t i = 0; i < count; ++i) {
+        PackedEntity e{};
+        e.id = arr[i].id;
+        e.type = static_cast<unsigned char>(arr[i].type);
+        e.x = arr[i].x; e.y = arr[i].y; e.vx = arr[i].vx; e.vy = arr[i].vy;
+        e.rgba = arr[i].rgba;
+        _entities.push_back(e);
+    }
+}
+
+void Screens::drawGameplay(ScreenState& screen) {
+    if (!_connected) {
+        titleCentered("Not connected. Press ESC.", GetScreenHeight()*0.5f, 24, RAYWHITE);
+        return;
+    }
+    ensureNetSetup();
+
+    // Input bits
+    std::uint8_t bits = 0;
+    if (IsKeyDown(KEY_LEFT))  bits |= rtype::net::InputLeft;
+    if (IsKeyDown(KEY_RIGHT)) bits |= rtype::net::InputRight;
+    if (IsKeyDown(KEY_UP))    bits |= rtype::net::InputUp;
+    if (IsKeyDown(KEY_DOWN))  bits |= rtype::net::InputDown;
+    if (IsKeyDown(KEY_SPACE)) bits |= rtype::net::InputShoot;
+
+    double now = GetTime();
+    if (now - _lastSend > 1.0/30.0) {
+        sendInput(bits);
+        _lastSend = now;
+    }
+
+    pumpNetworkOnce();
+
+    if (_entities.empty()) {
+        titleCentered("Connecting to game...", (int)(GetScreenHeight()*0.5f), 24, RAYWHITE);
+    }
+
+    // Render entities as simple shapes
+    for (const auto& e : _entities) {
+        Color c = {(unsigned char)((e.rgba>>24)&0xFF),(unsigned char)((e.rgba>>16)&0xFF),(unsigned char)((e.rgba>>8)&0xFF),(unsigned char)(e.rgba&0xFF)};
+        switch (e.type) {
+            case 1: // Player
+                DrawRectangle((int)e.x, (int)e.y, 20, 12, c);
+                break;
+            case 2: // Enemy
+                DrawCircle((int)e.x, (int)e.y, 10, c);
+                break;
+            case 3: // Bullet
+                DrawRectangle((int)e.x, (int)e.y, 6, 3, c);
+                break;
+            default:
+                break;
+        }
+    }
 }
 
 } // namespace ui

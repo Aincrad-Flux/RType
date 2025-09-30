@@ -13,6 +13,7 @@ private:
     MultiplayerForm _form;
     SingleplayerForm _singleForm;
     Screens _screens;
+    bool _resizedForGameplay = false;
 };
 
 } // namespace ui

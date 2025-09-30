@@ -42,6 +42,13 @@ void App::run() {
             case ScreenState::Menu: _screens.drawMenu(_screen); break;
             case ScreenState::Singleplayer: _screens.drawSingleplayer(_screen, _singleForm); break;
             case ScreenState::Multiplayer: _screens.drawMultiplayer(_screen, _form); break;
+            case ScreenState::Gameplay:
+                if (!_resizedForGameplay) {
+                    SetWindowSize(screenWidth * 1, screenHeight * 1);
+                    _resizedForGameplay = true;
+                }
+                _screens.drawGameplay(_screen);
+                break;
             case ScreenState::Options: _screens.drawOptions(); break;
             case ScreenState::Leaderboard: _screens.drawLeaderboard(); break;
             case ScreenState::Exiting: break;
