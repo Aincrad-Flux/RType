@@ -286,25 +286,60 @@ void Screens::drawGameplay(ScreenState& screen) {
 
     pumpNetworkOnce();
 
+    // --- HUD ---
+    int w = GetScreenWidth();
+    int h = GetScreenHeight();
+    int hudFont = (int)(h * 0.045f);
+    if (hudFont < 16) hudFont = 16;
+    int margin = 16;
+
+    // Nom du joueur (en haut à gauche)
+    DrawText(_username.c_str(), margin, margin, hudFont, RAYWHITE);
+
+    // Niveau (Lv) à droite du nom
+    int nameWidth = MeasureText(_username.c_str(), hudFont);
+    int lv = 1; // TODO: remplacer par la vraie valeur du niveau si disponible
+    std::string lvStr = "Lv " + std::to_string(lv);
+    int lvX = margin + nameWidth + 16;
+    DrawText(lvStr.c_str(), lvX, margin, hudFont, (Color){200, 200, 80, 255});
+
+    // Barre de HP sur la même ligne, à droite du lvl
+    float hp = 1.0f; // TODO: remplacer par la vraie valeur de HP (0.0 à 1.0)
+    int lvWidth = MeasureText(lvStr.c_str(), hudFont);
+    int barX = lvX + lvWidth + 32;
+    int barY = margin + hudFont/4;
+    int barH = hudFont/2;
+    int barW = w - barX - margin;
+    if (barW > 0) {
+        DrawRectangle(barX, barY, barW, barH, DARKGRAY);
+        DrawRectangle(barX, barY, (int)(barW * hp), barH, (Color){120, 220, 120, 255});
+        DrawRectangleLines(barX, barY, barW, barH, RAYWHITE);
+    }
+
+    // Calculer la zone HUD pour empêcher le joueur de passer dessous
+    int hudBottom = margin + hudFont;
+
     if (_entities.empty()) {
         titleCentered("Connecting to game...", (int)(GetScreenHeight()*0.5f), 24, RAYWHITE);
     }
 
     // Render entities as simple shapes
-    for (const auto& e : _entities) {
+    for (auto& e : _entities) {
         Color c = {(unsigned char)((e.rgba>>24)&0xFF),(unsigned char)((e.rgba>>16)&0xFF),(unsigned char)((e.rgba>>8)&0xFF),(unsigned char)(e.rgba&0xFF)};
-        switch (e.type) {
-            case 1: // Player
-                DrawRectangle((int)e.x, (int)e.y, 20, 12, c);
-                break;
-            case 2: // Enemy
-                DrawCircle((int)e.x, (int)e.y, 10, c);
-                break;
-            case 3: // Bullet
-                DrawRectangle((int)e.x, (int)e.y, 6, 3, c);
-                break;
-            default:
-                break;
+        if (e.type == 1) { // Player (on applique les contraintes)
+            // Taille du vaisseau
+            int shipW = 20, shipH = 12;
+            // Empêcher de passer sous le HUD
+            if (e.y < hudBottom) e.y = (float)hudBottom;
+            // Empêcher de sortir de l'écran
+            if (e.x < 0) e.x = 0;
+            if (e.x + shipW > w) e.x = (float)(w - shipW);
+            if (e.y + shipH > h) e.y = (float)(h - shipH);
+            DrawRectangle((int)e.x, (int)e.y, shipW, shipH, c);
+        } else if (e.type == 2) { // Enemy
+            DrawCircle((int)e.x, (int)e.y, 10, c);
+        } else if (e.type == 3) { // Bullet
+            DrawRectangle((int)e.x, (int)e.y, 6, 3, c);
         }
     }
 }
