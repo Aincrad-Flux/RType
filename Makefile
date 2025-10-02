@@ -1,4 +1,3 @@
-CONAN ?= conan
 CMAKE ?= cmake
 BUILD_DIR ?= build
 PRESET ?= Release
@@ -9,13 +8,11 @@ all: build
 
 check-conan:
 	@if ! command -v $(CONAN) >/dev/null 2>&1; then \
-		echo "[ERROR] Conan not found. Please install it using the instructions in the README.md file."; \
-		echo "        Then run: conan profile detect"; \
+		echo "[ERROR] Conan not found. Install it (pip install --user conan) then run: conan profile detect"; \
 		exit 1; \
 	fi
 
 setup: check-conan
-	# Profile detection removed to preserve custom conf values in default profile
 	@if [ ! -f "$(HOME)/.conan2/profiles/default" ]; then $(CONAN) profile detect || true; fi
 	@echo "[INFO] Installing dependencies with automatic system package installation..."
 	@echo "[INFO] If sudo is required, you may need to run: sudo make setup"
@@ -50,7 +47,7 @@ help:
 configure:
 	@toolchain_file=$$(find $(BUILD_DIR) -name conan_toolchain.cmake -print -quit); \
 	if [ -z "$$toolchain_file" ]; then \
-		echo "[ERROR] conan_toolchain.cmake not found under $(BUILD_DIR). Run 'make setup' first."; \
+		echo "[ERROR] conan_toolchain.cmake not found. Run 'make setup' first."; \
 		exit 1; \
 	fi; \
 	echo "[INFO] Using toolchain: $$toolchain_file"; \
@@ -79,3 +76,18 @@ run-server:
 
 run-client:
 	$(BUILD_DIR)/bin/r-type_client
+
+help:
+    @echo "Available targets:"; \
+    echo "  build       : Install deps (Conan) + configure + build"; \
+    echo "  setup       : Install dependencies (tries auto-install, suggests sudo if needed)"; \
+    echo "  run-server  : Run server binary"; \
+    echo "  run-client  : Run client binary"; \
+    echo "  clean       : Remove build directory (incremental artifacts)"; \
+    echo "  fclean      : Full clean (build + lib directory + root binaries)"; \
+    echo "  re          : Rebuild from scratch (fclean + build)"; \
+    echo "Variables:"; \
+    echo "  PRESET=Release|Debug (default Release)"; \
+    echo "Ensure Conan 2 installed: pip install --user conan"; \
+    echo ""; \
+    echo "If setup fails with permission errors, run: sudo make setup-sudo";
