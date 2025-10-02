@@ -2,7 +2,7 @@ CMAKE ?= cmake
 BUILD_DIR ?= build
 PRESET ?= Release
 
-.PHONY: all setup build clean fclean re run-server run-client configure help
+.PHONY: all setup setup-sudo build build-client build-server clean fclean re run-server run-client configure help
 
 all: build
 
@@ -14,10 +14,35 @@ check-conan:
 
 setup: check-conan
 	@if [ ! -f "$(HOME)/.conan2/profiles/default" ]; then $(CONAN) profile detect || true; fi
-	@echo "[INFO] Installing dependencies with sudo (apt)."
-	$(CONAN) install . -of=$(BUILD_DIR) --build=missing -s build_type=$(PRESET) \
-		-c tools.system.package_manager:mode=install \
-		-c tools.system.package_manager:sudo=True
+	@echo "[INFO] Installing dependencies with automatic system package installation..."
+	@echo "[INFO] If sudo is required, you may need to run: sudo make setup"
+	$(CONAN) install . -of=$(BUILD_DIR) --build=missing -s build_type=$(PRESET) -c tools.system.package_manager:mode=install || \
+		(echo "[ERROR] Conan failed to install system dependencies."; \
+		 echo "[INFO] This usually means system packages need to be installed with sudo."; \
+		 echo "[INFO] Please run: sudo make setup"; \
+		 exit 1)
+
+setup-sudo:
+	@echo "[INFO] Installing dependencies with sudo privileges..."
+	$(CONAN) install . -of=$(BUILD_DIR) --build=missing -s build_type=$(PRESET) -c tools.system.package_manager:mode=install
+
+help:
+	@echo "Available targets:"; \
+	echo "  build       : Install deps (Conan) + configure + build"; \
+	echo "  build-client: Build only the client target"; \
+	echo "  build-server: Build only the server target"; \
+	echo "  setup       : Install dependencies (tries auto-install, suggests sudo if needed)"; \
+	echo "  setup-sudo  : Install dependencies with sudo privileges"; \
+	echo "  run-server  : Run server binary"; \
+	echo "  run-client  : Run client binary"; \
+	echo "  clean       : Remove build directory (incremental artifacts)"; \
+	echo "  fclean      : Full clean (build + lib directory + root binaries)"; \
+	echo "  re          : Rebuild from scratch (fclean + build)"; \
+	echo "Variables:"; \
+	echo "  PRESET=Release|Debug (default Release)"; \
+	echo "Ensure Conan 2 installed: pip install --user conan"; \
+	echo ""; \
+	echo "If setup fails with permission errors, run: sudo make setup-sudo";
 
 configure:
 	@toolchain_file=$$(find $(BUILD_DIR) -name conan_toolchain.cmake -print -quit); \
@@ -30,6 +55,12 @@ configure:
 
 build: setup configure
 	$(CMAKE) --build $(BUILD_DIR) --config $(PRESET)
+
+build-client: setup configure
+	$(CMAKE) --build $(BUILD_DIR) --config $(PRESET) --target r-type_client
+
+build-server: setup configure
+	$(CMAKE) --build $(BUILD_DIR) --config $(PRESET) --target r-type_server
 
 clean:
 	rm -rf $(BUILD_DIR)
