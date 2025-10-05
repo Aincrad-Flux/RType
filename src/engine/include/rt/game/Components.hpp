@@ -3,9 +3,6 @@
 #include "rt/ecs/Types.hpp"
 #include "common/Protocol.hpp"
 
-// Forward declare to satisfy tools that may not resolve include paths
-namespace rtype::net { enum class EntityType : std::uint8_t; }
-
 namespace rt::game {
 
 struct Transform { float x = 0.f; float y = 0.f; };
@@ -13,8 +10,19 @@ struct Velocity { float vx = 0.f; float vy = 0.f; };
 struct ColorRGBA { std::uint32_t rgba = 0xFFFFFFFFu; };
 struct NetType { rtype::net::EntityType type; };
 
+// Generic axis-aligned box size for simple collisions and culling
+struct Size { float w = 0.f; float h = 0.f; };
+
 struct PlayerInput { std::uint8_t bits = 0; float speed = 150.f; };
 struct EnemyTag {};
+struct BulletTag {};
+
+// Shooter capability (cooldown-based continuous fire)
+struct Shooter {
+    float cooldown = 0.f;     // time left before next shot
+    float interval = 0.15f;   // seconds between shots when held
+    float bulletSpeed = 320.f; // px/s for player bullets
+};
 
 enum class FormationType : std::uint8_t { None = 0, Snake, Line, GridRect, Triangle };
 

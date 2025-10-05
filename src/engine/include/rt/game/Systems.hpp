@@ -16,6 +16,12 @@ class MovementSystem : public rt::ecs::System {
     void update(rt::ecs::Registry& r, float dt) override;
 };
 
+// Create bullets when player holds shoot; uses Shooter cooldown
+class ShootingSystem : public rt::ecs::System {
+  public:
+    void update(rt::ecs::Registry& r, float dt) override;
+};
+
 class FormationSystem : public rt::ecs::System {
   public:
     FormationSystem(float* elapsedPtr) : t_(elapsedPtr) {}
@@ -32,6 +38,16 @@ class DespawnOffscreenSystem : public rt::ecs::System {
     float minX_;
 };
 
+// Despawn when leaving screen bounds (for bullets etc.)
+class DespawnOutOfBoundsSystem : public rt::ecs::System {
+  public:
+    DespawnOutOfBoundsSystem(float minX, float maxX, float minY, float maxY)
+        : minX_(minX), maxX_(maxX), minY_(minY), maxY_(maxY) {}
+    void update(rt::ecs::Registry& r, float dt) override;
+  private:
+    float minX_, maxX_, minY_, maxY_;
+};
+
 // Spawns enemy formations at intervals
 class FormationSpawnSystem : public rt::ecs::System {
   public:
@@ -46,6 +62,12 @@ class FormationSpawnSystem : public rt::ecs::System {
     rt::ecs::Entity spawnLine(rt::ecs::Registry& r, float y, int count);
     rt::ecs::Entity spawnGrid(rt::ecs::Registry& r, float y, int rows, int cols);
     rt::ecs::Entity spawnTriangle(rt::ecs::Registry& r, float y, int rows);
+};
+
+// Handle simple AABB collisions: bullets vs enemies
+class CollisionSystem : public rt::ecs::System {
+  public:
+    void update(rt::ecs::Registry& r, float dt) override;
 };
 
 }
