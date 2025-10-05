@@ -66,6 +66,8 @@ void UdpServer::handlePacket(const asio::ip::udp::endpoint& from, const char* da
             reg_.emplace<rt::game::NetType>(e, {rtype::net::EntityType::Player});
             reg_.emplace<rt::game::ColorRGBA>(e, {0x55AAFFFFu});
             reg_.emplace<rt::game::PlayerInput>(e, {0, 150.f});
+            reg_.emplace<rt::game::Shooter>(e, {0.f, 0.15f, 320.f});
+            reg_.emplace<rt::game::Size>(e, {20.f, 12.f});
             endpointToPlayerId_[key] = e;
             playerInputBits_[e] = 0;
         }
@@ -96,9 +98,13 @@ void UdpServer::gameLoop() {
     float elapsed = 0.f;
     // Install systems once
     reg_.addSystem(std::make_unique<rt::game::InputSystem>());
+    reg_.addSystem(std::make_unique<rt::game::ShootingSystem>());
     reg_.addSystem(std::make_unique<rt::game::FormationSystem>(&elapsed));
     reg_.addSystem(std::make_unique<rt::game::MovementSystem>());
     reg_.addSystem(std::make_unique<rt::game::DespawnOffscreenSystem>(-50.f));
+    // Despawn bullets that leave screen (x: -50..1000, y: -50..600)
+    reg_.addSystem(std::make_unique<rt::game::DespawnOutOfBoundsSystem>(-50.f, 1000.f, -50.f, 600.f));
+    reg_.addSystem(std::make_unique<rt::game::CollisionSystem>());
     reg_.addSystem(std::make_unique<rt::game::FormationSpawnSystem>(rng_, &elapsed));
 
     while (running_) {
