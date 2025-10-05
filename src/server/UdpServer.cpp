@@ -1,6 +1,9 @@
 #include "UdpServer.hpp"
 #include <iostream>
 #include <cstring>
+#include <cmath>
+#include "rt/game/Components.hpp"
+#include "rt/game/Systems.hpp"
 
 namespace rtype::server {
 
@@ -56,17 +59,15 @@ void UdpServer::handlePacket(const asio::ip::udp::endpoint& from, const char* da
     if (header->type == rtype::net::MsgType::Hello) {
         keyToEndpoint_[key] = from;
         if (endpointToPlayerId_.find(key) == endpointToPlayerId_.end()) {
-            // Create a player entity
-            ServerEntity e{};
-            e.id = nextEntityId_++;
-            e.type = rtype::net::EntityType::Player;
-            e.x = 50.f;
-            e.y = 100.f + static_cast<float>(endpointToPlayerId_.size()) * 40.f;
-            e.vx = 0.f; e.vy = 0.f;
-            e.rgba = 0x55AAFFFFu; // cyan-ish
-            entities_.push_back(e);
-            endpointToPlayerId_[key] = e.id;
-            playerInputBits_[e.id] = 0;
+            // Create a player entity in ECS
+            auto e = reg_.create();
+            reg_.emplace<rt::game::Transform>(e, {50.f, 100.f + static_cast<float>(endpointToPlayerId_.size()) * 40.f});
+            reg_.emplace<rt::game::Velocity>(e, {0.f, 0.f});
+            reg_.emplace<rt::game::NetType>(e, {rtype::net::EntityType::Player});
+            reg_.emplace<rt::game::ColorRGBA>(e, {0x55AAFFFFu});
+            reg_.emplace<rt::game::PlayerInput>(e, {0, 150.f});
+            endpointToPlayerId_[key] = e;
+            playerInputBits_[e] = 0;
         }
         // Reply HelloAck
         rtype::net::Header ack{0, rtype::net::MsgType::HelloAck, rtype::net::ProtocolVersion};
@@ -80,6 +81,7 @@ void UdpServer::handlePacket(const asio::ip::udp::endpoint& from, const char* da
             auto it = endpointToPlayerId_.find(key);
             if (it != endpointToPlayerId_.end()) {
                 playerInputBits_[it->second] = in->bits;
+                if (auto* pi = reg_.get<rt::game::PlayerInput>(it->second)) pi->bits = in->bits;
             }
         }
         return;
@@ -91,47 +93,20 @@ void UdpServer::gameLoop() {
     const double tickRate = 60.0;
     const double dt = 1.0 / tickRate;
     auto next = clock::now();
-    double enemySpawnTimer = 0.0;
+    float elapsed = 0.f;
+    // Install systems once
+    reg_.addSystem(std::make_unique<rt::game::InputSystem>());
+    reg_.addSystem(std::make_unique<rt::game::FormationSystem>(&elapsed));
+    reg_.addSystem(std::make_unique<rt::game::MovementSystem>());
+    reg_.addSystem(std::make_unique<rt::game::DespawnOffscreenSystem>(-50.f));
+    reg_.addSystem(std::make_unique<rt::game::FormationSpawnSystem>(rng_, &elapsed));
 
     while (running_) {
         next += std::chrono::duration_cast<clock::duration>(std::chrono::duration<double>(dt));
+    elapsed += static_cast<float>(dt);
 
-        // Apply inputs to players
-        for (auto& ent : entities_) {
-            if (ent.type != rtype::net::EntityType::Player) continue;
-            std::uint8_t bits = playerInputBits_[ent.id];
-            float speed = 150.f;
-            float vx = 0.f, vy = 0.f;
-            if (bits & rtype::net::InputLeft)  vx -= speed;
-            if (bits & rtype::net::InputRight) vx += speed;
-            if (bits & rtype::net::InputUp)    vy -= speed;
-            if (bits & rtype::net::InputDown)  vy += speed;
-            ent.x += vx * static_cast<float>(dt);
-            ent.y += vy * static_cast<float>(dt);
-        }
-
-        // Simple enemy spawn and movement
-        enemySpawnTimer += dt;
-        if (enemySpawnTimer > 2.0) {
-            enemySpawnTimer = 0.0;
-            std::uniform_real_distribution<float> ydist(20.f, 500.f);
-            ServerEntity e{};
-            e.id = nextEntityId_++;
-            e.type = rtype::net::EntityType::Enemy;
-            e.x = 900.f; e.y = ydist(rng_);
-            e.vx = -60.f; e.vy = 0.f;
-            e.rgba = 0xFF5555FFu;
-            entities_.push_back(e);
-        }
-        for (auto& ent : entities_) {
-            if (ent.type == rtype::net::EntityType::Enemy) {
-                ent.x += ent.vx * static_cast<float>(dt);
-            }
-        }
-        // Remove off-screen enemies
-        entities_.erase(std::remove_if(entities_.begin(), entities_.end(), [](const ServerEntity& e){
-            return e.type == rtype::net::EntityType::Enemy && e.x < -50.f;
-        }), entities_.end());
+        // Tick ECS
+        reg_.update(static_cast<float>(dt));
 
         broadcastState();
 
@@ -139,29 +114,41 @@ void UdpServer::gameLoop() {
     }
 }
 
+
 void UdpServer::broadcastState() {
     // Build State packet
     rtype::net::Header hdr{};
     hdr.version = rtype::net::ProtocolVersion;
     hdr.type = rtype::net::MsgType::State;
     rtype::net::StateHeader sh{};
-    sh.count = static_cast<std::uint16_t>(std::min<size_t>(entities_.size(), 512));
+    // collect ECS entities with NetType for serialization
+    std::vector<rtype::net::PackedEntity> net;
+    net.reserve(512);
+    auto& types = reg_.storage<rt::game::NetType>().data();
+    for (auto& [e, nt] : types) {
+        auto* tr = reg_.get<rt::game::Transform>(e);
+        auto* ve = reg_.get<rt::game::Velocity>(e);
+        auto* co = reg_.get<rt::game::ColorRGBA>(e);
+        if (!tr || !ve || !co) continue;
+        rtype::net::PackedEntity pe{};
+        pe.id = e;
+        pe.type = nt.type;
+        pe.x = tr->x; pe.y = tr->y;
+        pe.vx = ve->vx; pe.vy = ve->vy;
+        pe.rgba = co->rgba;
+        net.push_back(pe);
+        if (net.size() >= 512) break;
+    }
+    sh.count = static_cast<std::uint16_t>(net.size());
 
-    std::size_t payloadSize = sizeof(rtype::net::StateHeader) + sh.count * sizeof(rtype::net::PackedEntity);
+    std::size_t payloadSize = sizeof(rtype::net::StateHeader) + net.size() * sizeof(rtype::net::PackedEntity);
     hdr.size = static_cast<std::uint16_t>(payloadSize);
 
     std::vector<char> out(sizeof(rtype::net::Header) + payloadSize);
     std::memcpy(out.data(), &hdr, sizeof(hdr));
     std::memcpy(out.data() + sizeof(hdr), &sh, sizeof(sh));
     auto* arr = reinterpret_cast<rtype::net::PackedEntity*>(out.data() + sizeof(hdr) + sizeof(sh));
-    for (std::uint16_t i = 0; i < sh.count; ++i) {
-        const auto& e = entities_[i];
-        arr[i].id = e.id;
-        arr[i].type = e.type;
-        arr[i].x = e.x; arr[i].y = e.y;
-        arr[i].vx = e.vx; arr[i].vy = e.vy;
-        arr[i].rgba = e.rgba;
-    }
+    for (std::uint16_t i = 0; i < sh.count; ++i) arr[i] = net[i];
 
     for (const auto& [key, ep] : keyToEndpoint_) {
         doSend(ep, out.data(), out.size());

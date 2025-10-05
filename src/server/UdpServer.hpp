@@ -7,18 +7,9 @@
 #include <random>
 #include <string>
 #include "common/Protocol.hpp"
+#include "rt/ecs/Registry.hpp"
 
 namespace rtype::server {
-
-struct ServerEntity {
-    std::uint32_t id;
-    rtype::net::EntityType type;
-    float x;
-    float y;
-    float vx;
-    float vy;
-    std::uint32_t rgba;
-};
 
 class UdpServer {
   public:
@@ -45,8 +36,8 @@ class UdpServer {
     std::unordered_map<std::string, std::uint32_t> endpointToPlayerId_;
     std::unordered_map<std::string, asio::ip::udp::endpoint> keyToEndpoint_;
     std::unordered_map<std::uint32_t, std::uint8_t> playerInputBits_;
-    std::vector<ServerEntity> entities_;
-    std::uint32_t nextEntityId_ = 1;
+    // ECS registry holds all entities/components
+    rt::ecs::Registry reg_;
     std::mt19937 rng_;
 };
 
