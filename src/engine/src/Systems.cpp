@@ -98,6 +98,18 @@ void FormationSystem::update(rt::ecs::Registry& r, float dt) {
             default:
                 break;
         }
+        // Clamp follower vertical position inside playable area so enemies don't overlap HUD or leave screen
+        // World vertical bounds are defined [kTopMargin, kWorldH - kBottomMargin - entityHeight]
+        constexpr float kWorldH = 600.f;        // server world height used across systems
+        constexpr float kTopMargin = 56.f;      // reserve top HUD area (~name+lvl bar)
+        constexpr float kBottomMargin = 10.f;   // small safety margin at bottom
+        if (auto* sz = r.get<Size>(e)) {
+            float maxY = kWorldH - kBottomMargin - std::max(0.f, sz->h);
+            y = std::clamp(y, kTopMargin, maxY);
+        } else {
+            // If size unknown, still keep roughly within screen
+            y = std::clamp(y, kTopMargin, kWorldH - kBottomMargin);
+        }
         t->x = x; t->y = y;
         // inherit velocity for serialization
         if (auto* v = r.get<Velocity>(e)) v->vx = -std::abs(fo->speedX);
@@ -221,15 +233,60 @@ void FormationSpawnSystem::update(rt::ecs::Registry& r, float dt) {
     timer_ += dt;
     if (timer_ < 3.0f) return;
     timer_ = 0.f;
-    std::uniform_real_distribution<float> ydist(60.f, 520.f);
+    // World and margins
+    constexpr float kWorldH = 600.f;
+    constexpr float kTopMargin = 56.f;
+    constexpr float kBottomMargin = 10.f;
+    constexpr float kEnemyH = 12.f; // default enemy sprite height
+    constexpr float kSpacing = 36.f;
     std::uniform_int_distribution<int> pick(0, 3);
     int k = pick(rng_);
-    float y = ydist(rng_);
+    float y = kTopMargin + 80.f; // fallback
     switch (k) {
-        case 0: spawnSnake(r, y, 6); break;
-        case 1: spawnLine(r, y, 8); break;
-        case 2: spawnGrid(r, y, 3, 5); break;
-        case 3: spawnTriangle(r, y, 5); break;
+        case 0: {
+            // Snake: need room for sine amplitude on both sides
+            float amplitude = 70.f;
+            float minY = kTopMargin + amplitude;
+            float maxY = kWorldH - kBottomMargin - amplitude - kEnemyH;
+            if (minY > maxY) std::swap(minY, maxY);
+            std::uniform_real_distribution<float> ydist(minY, maxY);
+            y = ydist(rng_);
+            spawnSnake(r, y, 6);
+            break;
+        }
+        case 1: {
+            // Line: single row
+            float minY = kTopMargin;
+            float maxY = kWorldH - kBottomMargin - kEnemyH;
+            std::uniform_real_distribution<float> ydist(minY, maxY);
+            y = ydist(rng_);
+            spawnLine(r, y, 8);
+            break;
+        }
+        case 2: {
+            // Grid: rows x cols, vertical extent = (rows-1)*spacing + enemyH
+            int rows = 3, cols = 5;
+            float extent = (rows - 1) * kSpacing + kEnemyH;
+            float minY = kTopMargin;
+            float maxY = kWorldH - kBottomMargin - extent;
+            if (minY > maxY) std::swap(minY, maxY);
+            std::uniform_real_distribution<float> ydist(minY, maxY);
+            y = ydist(rng_);
+            spawnGrid(r, y, rows, cols);
+            break;
+        }
+        case 3: {
+            // Triangle: vertical half-extent = 0.5*(rows-1)*spacing
+            int rows = 5;
+            float half = 0.5f * (rows - 1) * kSpacing;
+            float minY = kTopMargin + half;
+            float maxY = kWorldH - kBottomMargin - half - kEnemyH;
+            if (minY > maxY) std::swap(minY, maxY);
+            std::uniform_real_distribution<float> ydist(minY, maxY);
+            y = ydist(rng_);
+            spawnTriangle(r, y, rows);
+            break;
+        }
         default: spawnLine(r, y, 6); break;
     }
 }
