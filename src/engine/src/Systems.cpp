@@ -90,12 +90,12 @@ void DespawnOffscreenSystem::update(rt::ecs::Registry& r, float dt) {
 rt::ecs::Entity FormationSpawnSystem::spawnSnake(rt::ecs::Registry& r, float y, int count) {
     auto origin = r.create();
     r.emplace<Transform>(origin, {980.f, y});
-    r.emplace<Velocity>(origin, {-90.f, 0.f});
-    r.emplace<Formation>(origin, {FormationType::Snake, -90.f, 70.f, 2.5f, 36.f, 0, 0});
+    r.emplace<Velocity>(origin, {-60.f, 0.f});
+    r.emplace<Formation>(origin, {FormationType::Snake, -60.f, 70.f, 2.5f, 36.f, 0, 0});
     for (int i = 0; i < count; ++i) {
         auto e = r.create();
         r.emplace<Transform>(e, {980.f + i * 36.f, y});
-        r.emplace<Velocity>(e, {-90.f, 0.f});
+        r.emplace<Velocity>(e, {-60.f, 0.f});
         r.emplace<NetType>(e, {rtype::net::EntityType::Enemy});
         r.emplace<ColorRGBA>(e, {0xFF5555FFu});
         r.emplace<EnemyTag>(e, {});
@@ -107,12 +107,12 @@ rt::ecs::Entity FormationSpawnSystem::spawnSnake(rt::ecs::Registry& r, float y, 
 rt::ecs::Entity FormationSpawnSystem::spawnLine(rt::ecs::Registry& r, float y, int count) {
     auto origin = r.create();
     r.emplace<Transform>(origin, {980.f, y});
-    r.emplace<Velocity>(origin, {-100.f, 0.f});
-    r.emplace<Formation>(origin, {FormationType::Line, -100.f, 0.f, 0.f, 40.f, 0, 0});
+    r.emplace<Velocity>(origin, {-60.f, 0.f});
+    r.emplace<Formation>(origin, {FormationType::Line, -60.f, 0.f, 0.f, 40.f, 0, 0});
     for (int i = 0; i < count; ++i) {
         auto e = r.create();
         r.emplace<Transform>(e, {980.f + i * 40.f, y});
-        r.emplace<Velocity>(e, {-100.f, 0.f});
+        r.emplace<Velocity>(e, {-60.f, 0.f});
         r.emplace<NetType>(e, {rtype::net::EntityType::Enemy});
         r.emplace<ColorRGBA>(e, {0xE06666FFu});
         r.emplace<EnemyTag>(e, {});
@@ -124,14 +124,14 @@ rt::ecs::Entity FormationSpawnSystem::spawnLine(rt::ecs::Registry& r, float y, i
 rt::ecs::Entity FormationSpawnSystem::spawnGrid(rt::ecs::Registry& r, float y, int rows, int cols) {
     auto origin = r.create();
     r.emplace<Transform>(origin, {980.f, y});
-    r.emplace<Velocity>(origin, {-70.f, 0.f});
-    r.emplace<Formation>(origin, {FormationType::GridRect, -70.f, 0.f, 0.f, 36.f, rows, cols});
+    r.emplace<Velocity>(origin, {-50.f, 0.f});
+    r.emplace<Formation>(origin, {FormationType::GridRect, -50.f, 0.f, 0.f, 36.f, rows, cols});
     for (int rr = 0; rr < rows; ++rr) {
         for (int cc = 0; cc < cols; ++cc) {
             int idx = rr * cols + cc;
             auto e = r.create();
             r.emplace<Transform>(e, {980.f + cc * 36.f, y + rr * 36.f});
-            r.emplace<Velocity>(e, {-70.f, 0.f});
+            r.emplace<Velocity>(e, {-50.f, 0.f});
             r.emplace<NetType>(e, {rtype::net::EntityType::Enemy});
             r.emplace<ColorRGBA>(e, {0xCC4444FFu});
             r.emplace<EnemyTag>(e, {});
@@ -144,20 +144,23 @@ rt::ecs::Entity FormationSpawnSystem::spawnGrid(rt::ecs::Registry& r, float y, i
 rt::ecs::Entity FormationSpawnSystem::spawnTriangle(rt::ecs::Registry& r, float y, int rows) {
     auto origin = r.create();
     r.emplace<Transform>(origin, {980.f, y});
-    r.emplace<Velocity>(origin, {-80.f, 0.f});
-    r.emplace<Formation>(origin, {FormationType::Triangle, -80.f, 0.f, 0.f, 36.f, rows, 0});
+    r.emplace<Velocity>(origin, {-55.f, 0.f});
+    r.emplace<Formation>(origin, {FormationType::Triangle, -55.f, 0.f, 0.f, 36.f, rows, 0});
     int idx = 0;
-    for (int rr = 0; rr < rows; ++rr) {
-        int cols = rr + 1;
-        float startX = -0.5f * (cols - 1) * 36.f;
-        for (int cc = 0; cc < cols; ++cc) {
+    // Left-pointing triangle: apex on the left, expanding columns to the right
+    for (int cc = 0; cc < rows; ++cc) {
+        int count = cc + 1; // number of enemies in this column
+        float startY = -0.5f * (count - 1) * 36.f; // center vertically per column
+        for (int rr = 0; rr < count; ++rr) {
             auto e = r.create();
-            r.emplace<Transform>(e, {980.f + startX + cc * 36.f, y + rr * 36.f});
-            r.emplace<Velocity>(e, {-80.f, 0.f});
+            float localX = cc * 36.f;
+            float localY = startY + rr * 36.f;
+            r.emplace<Transform>(e, {980.f + localX, y + localY});
+            r.emplace<Velocity>(e, {-55.f, 0.f});
             r.emplace<NetType>(e, {rtype::net::EntityType::Enemy});
             r.emplace<ColorRGBA>(e, {0xDD7777FFu});
             r.emplace<EnemyTag>(e, {});
-            r.emplace<FormationFollower>(e, {origin, static_cast<std::uint16_t>(idx++), startX + cc * 36.f, rr * 36.f});
+            r.emplace<FormationFollower>(e, {origin, static_cast<std::uint16_t>(idx++), localX, localY});
         }
     }
     return origin;
