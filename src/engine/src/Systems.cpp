@@ -1,5 +1,8 @@
 #include <cmath>
 #include <algorithm>
+#include <random>
+#include <limits>
+#include <vector>
 #include "rt/game/Systems.hpp"
 
 namespace rt::game {
@@ -38,13 +41,13 @@ void MovementSystem::update(rt::ecs::Registry& r, float dt) {
 void ShootingSystem::update(rt::ecs::Registry& r, float dt) {
     // For every player with PlayerInput and Shooter, spawn bullets while holding shoot
     auto& inputs = r.storage<PlayerInput>().data();
+    constexpr std::uint8_t kShoot = 1 << 4;
     for (auto& [e, inp] : inputs) {
         auto* shooter = r.get<Shooter>(e);
         auto* t = r.get<Transform>(e);
         if (!shooter || !t) continue;
         shooter->cooldown -= dt;
-    constexpr std::uint8_t kShoot = 1 << 4;
-    bool wantShoot = (inp.bits & kShoot) != 0;
+        bool wantShoot = (inp.bits & kShoot) != 0;
         while (wantShoot && shooter->cooldown <= 0.f) {
             shooter->cooldown += shooter->interval;
             // Spawn a bullet entity slightly ahead of the player ship
@@ -55,9 +58,67 @@ void ShootingSystem::update(rt::ecs::Registry& r, float dt) {
             r.emplace<Velocity>(b, {shooter->bulletSpeed, 0.f});
             r.emplace<NetType>(b, {static_cast<rtype::net::EntityType>(3)});
             r.emplace<ColorRGBA>(b, {0xFFFF55FFu});
-            r.emplace<BulletTag>(b, {});
+            r.emplace<BulletTag>(b, {BulletFaction::Player});
             r.emplace<Size>(b, {6.f, 3.f});
         }
+    }
+}
+
+// Enemy shooting towards nearest player with variable accuracy
+void EnemyShootingSystem::update(rt::ecs::Registry& r, float dt) {
+    // Build a list of players
+    std::vector<rt::ecs::Entity> players;
+    for (auto& [e, nt] : r.storage<NetType>().data()) {
+        if (nt.type == rtype::net::EntityType::Player) players.push_back(e);
+    }
+    if (players.empty()) return;
+
+    // Update each enemy with EnemyShooter
+    auto& shooters = r.storage<EnemyShooter>().data();
+    for (auto& [e, es] : shooters) {
+        es.cooldown -= dt;
+        if (es.cooldown > 0.f) continue;
+        auto* t = r.get<Transform>(e);
+        if (!t) continue;
+        // Find nearest player
+        rt::ecs::Entity best = players[0];
+        float bestDist2 = std::numeric_limits<float>::infinity();
+        for (auto p : players) {
+            auto* pt = r.get<Transform>(p);
+            if (!pt) continue;
+            float dx = pt->x - t->x;
+            float dy = pt->y - t->y;
+            float d2 = dx*dx + dy*dy;
+            if (d2 < bestDist2) { bestDist2 = d2; best = p; }
+        }
+        auto* pt = r.get<Transform>(best);
+        if (!pt) continue;
+        // Compute direction with inaccuracy
+        float dx = pt->x - t->x;
+        float dy = pt->y - t->y;
+        float len = std::sqrt(dx*dx + dy*dy);
+        if (len < 1e-3f) { dx = 1.f; dy = 0.f; len = 1.f; }
+        dx /= len; dy /= len;
+        // accuracy in [0.5, 0.8] applied as blend towards ideal direction, with random perpendicular jitter
+        float acc = std::clamp(es.accuracy, 0.5f, 0.8f);
+        // random angle offset up to maxAngle where lower accuracy => larger offset
+        float maxAngle = (1.f - acc) * 0.5f; // radians up to ~0.25 rad ~ 14deg when acc=0.5
+        std::uniform_real_distribution<float> ang(-maxAngle, maxAngle);
+        float a = ang(rng_);
+        float cs = std::cos(a), sn = std::sin(a);
+        float dirx = dx * cs - dy * sn;
+        float diry = dx * sn + dy * cs;
+        // Spawn bullet
+        auto b = r.create();
+        float bx = t->x - 10.f; // from enemy front
+        float by = t->y + 6.f;
+        r.emplace<Transform>(b, {bx, by});
+        r.emplace<Velocity>(b, {dirx * es.bulletSpeed, diry * es.bulletSpeed});
+        r.emplace<NetType>(b, {static_cast<rtype::net::EntityType>(3)});
+        r.emplace<ColorRGBA>(b, {0xFFAA00FFu});
+        r.emplace<BulletTag>(b, {BulletFaction::Enemy});
+        r.emplace<Size>(b, {6.f, 3.f});
+        es.cooldown += es.interval;
     }
 }
 
@@ -155,7 +216,7 @@ rt::ecs::Entity FormationSpawnSystem::spawnSnake(rt::ecs::Registry& r, float y, 
         auto e = r.create();
         r.emplace<Transform>(e, {980.f + i * 36.f, y});
         r.emplace<Velocity>(e, {-60.f, 0.f});
-    r.emplace<NetType>(e, {static_cast<rtype::net::EntityType>(2)});
+        r.emplace<NetType>(e, {static_cast<rtype::net::EntityType>(2)});
         r.emplace<ColorRGBA>(e, {0xFF5555FFu});
         r.emplace<EnemyTag>(e, {});
         r.emplace<Size>(e, {18.f, 12.f});
@@ -229,17 +290,43 @@ rt::ecs::Entity FormationSpawnSystem::spawnTriangle(rt::ecs::Registry& r, float 
     return origin;
 }
 
+// Big enemies that also shoot at players
+rt::ecs::Entity FormationSpawnSystem::spawnBigShooters(rt::ecs::Registry& r, float y, int count) {
+    auto origin = r.create();
+    r.emplace<Transform>(origin, {980.f, y});
+    r.emplace<Velocity>(origin, {-40.f, 0.f});
+    r.emplace<Formation>(origin, {FormationType::Line, -40.f, 0.f, 0.f, 64.f, 0, 0});
+    std::uniform_real_distribution<float> accd(0.5f, 0.8f);
+    for (int i = 0; i < count; ++i) {
+        auto e = r.create();
+        float localX = i * 64.f;
+        r.emplace<Transform>(e, {980.f + localX, y});
+        r.emplace<Velocity>(e, {-40.f, 0.f});
+        r.emplace<NetType>(e, {static_cast<rtype::net::EntityType>(2)});
+        r.emplace<ColorRGBA>(e, {0xAA3333FFu});
+        r.emplace<EnemyTag>(e, {});
+        r.emplace<Size>(e, {28.f, 20.f});
+        r.emplace<FormationFollower>(e, {origin, static_cast<std::uint16_t>(i), localX, 0.f});
+        r.emplace<EnemyShooter>(e, {0.f, 1.2f, 240.f, accd(rng_)});
+    }
+    return origin;
+}
+
 void FormationSpawnSystem::update(rt::ecs::Registry& r, float dt) {
     timer_ += dt;
     if (timer_ < 3.0f) return;
     timer_ = 0.f;
+    // Limit to at most two active formations (origins)
+    int activeFormations = 0;
+    for (auto& [e, _] : r.storage<Formation>().data()) { (void)e; ++activeFormations; }
+    if (activeFormations >= 2) return;
     // World and margins
     constexpr float kWorldH = 600.f;
     constexpr float kTopMargin = 56.f;
     constexpr float kBottomMargin = 10.f;
     constexpr float kEnemyH = 12.f; // default enemy sprite height
     constexpr float kSpacing = 36.f;
-    std::uniform_int_distribution<int> pick(0, 3);
+    std::uniform_int_distribution<int> pick(0, 4);
     int k = pick(rng_);
     float y = kTopMargin + 80.f; // fallback
     switch (k) {
@@ -287,19 +374,25 @@ void FormationSpawnSystem::update(rt::ecs::Registry& r, float dt) {
             spawnTriangle(r, y, rows);
             break;
         }
+        case 4: {
+            // Big shooters line, fewer units and larger size
+            float minY = kTopMargin;
+            float maxY = kWorldH - kBottomMargin - 20.f; // account for big enemy height
+            std::uniform_real_distribution<float> ydist(minY, maxY);
+            y = ydist(rng_);
+            spawnBigShooters(r, y, 3);
+            break;
+        }
         default: spawnLine(r, y, 6); break;
     }
 }
 
 void CollisionSystem::update(rt::ecs::Registry& r, float dt) {
     (void)dt;
-    // Gather bullets and enemies
+    // Gather bullets
     std::vector<rt::ecs::Entity> bullets;
-    bullets.reserve(64);
+    bullets.reserve(128);
     for (auto& [e, _] : r.storage<BulletTag>().data()) bullets.push_back(e);
-    std::vector<rt::ecs::Entity> enemies;
-    enemies.reserve(128);
-    for (auto& [e, _] : r.storage<EnemyTag>().data()) enemies.push_back(e);
 
     std::vector<rt::ecs::Entity> toDestroy;
     auto intersects = [&](rt::ecs::Entity a, rt::ecs::Entity b){
@@ -311,12 +404,20 @@ void CollisionSystem::update(rt::ecs::Registry& r, float dt) {
         return !(ax2 < tb->x || bx2 < ta->x || ay2 < tb->y || by2 < ta->y);
     };
 
+    // Collide bullets with appropriate targets
     for (auto b : bullets) {
-        for (auto e : enemies) {
-            if (intersects(b, e)) {
-                toDestroy.push_back(b);
-                toDestroy.push_back(e);
-                break; // one enemy per bullet
+        auto* bt = r.get<BulletTag>(b);
+        if (!bt) continue;
+        if (bt->faction == BulletFaction::Player) {
+            // hit enemies
+            for (auto& [e, _] : r.storage<EnemyTag>().data()) {
+                if (intersects(b, e)) { toDestroy.push_back(b); toDestroy.push_back(e); break; }
+            }
+        } else {
+            // enemy bullets hit players
+            for (auto& [e, _] : r.storage<PlayerInput>().data()) {
+                // players have PlayerInput component
+                if (intersects(b, e)) { toDestroy.push_back(b); toDestroy.push_back(e); break; }
             }
         }
     }
