@@ -11,10 +11,14 @@ void InputSystem::update(rt::ecs::Registry& r, float dt) {
         auto* t = r.get<Transform>(e);
         if (!t) continue;
         float vx = 0.f, vy = 0.f;
-        if (inp.bits & rtype::net::InputLeft)  vx -= inp.speed;
-        if (inp.bits & rtype::net::InputRight) vx += inp.speed;
-        if (inp.bits & rtype::net::InputUp)    vy -= inp.speed;
-        if (inp.bits & rtype::net::InputDown)  vy += inp.speed;
+        constexpr std::uint8_t kUp = 1 << 0;
+        constexpr std::uint8_t kDown = 1 << 1;
+        constexpr std::uint8_t kLeft = 1 << 2;
+        constexpr std::uint8_t kRight = 1 << 3;
+        if (inp.bits & kLeft)  vx -= inp.speed;
+        if (inp.bits & kRight) vx += inp.speed;
+        if (inp.bits & kUp)    vy -= inp.speed;
+        if (inp.bits & kDown)  vy += inp.speed;
         // Directly integrate on transform (simple for now)
         t->x += vx * dt;
         t->y += vy * dt;
@@ -28,6 +32,32 @@ void MovementSystem::update(rt::ecs::Registry& r, float dt) {
         if (!t) continue;
         t->x += v.vx * dt;
         t->y += v.vy * dt;
+    }
+}
+
+void ShootingSystem::update(rt::ecs::Registry& r, float dt) {
+    // For every player with PlayerInput and Shooter, spawn bullets while holding shoot
+    auto& inputs = r.storage<PlayerInput>().data();
+    for (auto& [e, inp] : inputs) {
+        auto* shooter = r.get<Shooter>(e);
+        auto* t = r.get<Transform>(e);
+        if (!shooter || !t) continue;
+        shooter->cooldown -= dt;
+    constexpr std::uint8_t kShoot = 1 << 4;
+    bool wantShoot = (inp.bits & kShoot) != 0;
+        while (wantShoot && shooter->cooldown <= 0.f) {
+            shooter->cooldown += shooter->interval;
+            // Spawn a bullet entity slightly ahead of the player ship
+            auto b = r.create();
+            float bx = t->x + 20.f; // assuming player ship width ~20
+            float by = t->y + 5.f;  // center roughly
+            r.emplace<Transform>(b, {bx, by});
+            r.emplace<Velocity>(b, {shooter->bulletSpeed, 0.f});
+            r.emplace<NetType>(b, {static_cast<rtype::net::EntityType>(3)});
+            r.emplace<ColorRGBA>(b, {0xFFFF55FFu});
+            r.emplace<BulletTag>(b, {});
+            r.emplace<Size>(b, {6.f, 3.f});
+        }
     }
 }
 
@@ -86,6 +116,23 @@ void DespawnOffscreenSystem::update(rt::ecs::Registry& r, float dt) {
     for (auto e : toDestroy) r.destroy(e);
 }
 
+void DespawnOutOfBoundsSystem::update(rt::ecs::Registry& r, float dt) {
+    (void)dt;
+    std::vector<rt::ecs::Entity> toDestroy;
+    auto& transforms = r.storage<Transform>().data();
+    for (auto& [e, t] : transforms) {
+        // Only consider bullets for out-of-bounds despawn to avoid killing players
+        if (!r.get<BulletTag>(e)) continue;
+        auto* sz = r.get<Size>(e);
+        float w = sz ? sz->w : 0.f;
+        float h = sz ? sz->h : 0.f;
+        if (t.x + w < minX_ || t.x > maxX_ || t.y + h < minY_ || t.y > maxY_) {
+            toDestroy.push_back(e);
+        }
+    }
+    for (auto e : toDestroy) r.destroy(e);
+}
+
 // --- Spawn formations ---
 rt::ecs::Entity FormationSpawnSystem::spawnSnake(rt::ecs::Registry& r, float y, int count) {
     auto origin = r.create();
@@ -96,9 +143,10 @@ rt::ecs::Entity FormationSpawnSystem::spawnSnake(rt::ecs::Registry& r, float y, 
         auto e = r.create();
         r.emplace<Transform>(e, {980.f + i * 36.f, y});
         r.emplace<Velocity>(e, {-60.f, 0.f});
-        r.emplace<NetType>(e, {rtype::net::EntityType::Enemy});
+    r.emplace<NetType>(e, {static_cast<rtype::net::EntityType>(2)});
         r.emplace<ColorRGBA>(e, {0xFF5555FFu});
         r.emplace<EnemyTag>(e, {});
+        r.emplace<Size>(e, {18.f, 12.f});
         r.emplace<FormationFollower>(e, {origin, static_cast<std::uint16_t>(i), i * 36.f, 0.f});
     }
     return origin;
@@ -113,9 +161,10 @@ rt::ecs::Entity FormationSpawnSystem::spawnLine(rt::ecs::Registry& r, float y, i
         auto e = r.create();
         r.emplace<Transform>(e, {980.f + i * 40.f, y});
         r.emplace<Velocity>(e, {-60.f, 0.f});
-        r.emplace<NetType>(e, {rtype::net::EntityType::Enemy});
+    r.emplace<NetType>(e, {static_cast<rtype::net::EntityType>(2)});
         r.emplace<ColorRGBA>(e, {0xE06666FFu});
         r.emplace<EnemyTag>(e, {});
+        r.emplace<Size>(e, {18.f, 12.f});
         r.emplace<FormationFollower>(e, {origin, static_cast<std::uint16_t>(i), i * 40.f, 0.f});
     }
     return origin;
@@ -132,9 +181,10 @@ rt::ecs::Entity FormationSpawnSystem::spawnGrid(rt::ecs::Registry& r, float y, i
             auto e = r.create();
             r.emplace<Transform>(e, {980.f + cc * 36.f, y + rr * 36.f});
             r.emplace<Velocity>(e, {-50.f, 0.f});
-            r.emplace<NetType>(e, {rtype::net::EntityType::Enemy});
+            r.emplace<NetType>(e, {static_cast<rtype::net::EntityType>(2)});
             r.emplace<ColorRGBA>(e, {0xCC4444FFu});
             r.emplace<EnemyTag>(e, {});
+            r.emplace<Size>(e, {18.f, 12.f});
             r.emplace<FormationFollower>(e, {origin, static_cast<std::uint16_t>(idx), cc * 36.f, rr * 36.f});
         }
     }
@@ -157,9 +207,10 @@ rt::ecs::Entity FormationSpawnSystem::spawnTriangle(rt::ecs::Registry& r, float 
             float localY = startY + rr * 36.f;
             r.emplace<Transform>(e, {980.f + localX, y + localY});
             r.emplace<Velocity>(e, {-55.f, 0.f});
-            r.emplace<NetType>(e, {rtype::net::EntityType::Enemy});
+            r.emplace<NetType>(e, {static_cast<rtype::net::EntityType>(2)});
             r.emplace<ColorRGBA>(e, {0xDD7777FFu});
             r.emplace<EnemyTag>(e, {});
+            r.emplace<Size>(e, {18.f, 12.f});
             r.emplace<FormationFollower>(e, {origin, static_cast<std::uint16_t>(idx++), localX, localY});
         }
     }
@@ -181,6 +232,38 @@ void FormationSpawnSystem::update(rt::ecs::Registry& r, float dt) {
         case 3: spawnTriangle(r, y, 5); break;
         default: spawnLine(r, y, 6); break;
     }
+}
+
+void CollisionSystem::update(rt::ecs::Registry& r, float dt) {
+    (void)dt;
+    // Gather bullets and enemies
+    std::vector<rt::ecs::Entity> bullets;
+    bullets.reserve(64);
+    for (auto& [e, _] : r.storage<BulletTag>().data()) bullets.push_back(e);
+    std::vector<rt::ecs::Entity> enemies;
+    enemies.reserve(128);
+    for (auto& [e, _] : r.storage<EnemyTag>().data()) enemies.push_back(e);
+
+    std::vector<rt::ecs::Entity> toDestroy;
+    auto intersects = [&](rt::ecs::Entity a, rt::ecs::Entity b){
+        auto* ta = r.get<Transform>(a); auto* sa = r.get<Size>(a);
+        auto* tb = r.get<Transform>(b); auto* sb = r.get<Size>(b);
+        if (!ta || !tb || !sa || !sb) return false;
+        float ax2 = ta->x + sa->w, ay2 = ta->y + sa->h;
+        float bx2 = tb->x + sb->w, by2 = tb->y + sb->h;
+        return !(ax2 < tb->x || bx2 < ta->x || ay2 < tb->y || by2 < ta->y);
+    };
+
+    for (auto b : bullets) {
+        for (auto e : enemies) {
+            if (intersects(b, e)) {
+                toDestroy.push_back(b);
+                toDestroy.push_back(e);
+                break; // one enemy per bullet
+            }
+        }
+    }
+    for (auto e : toDestroy) r.destroy(e);
 }
 
 }
