@@ -3,12 +3,15 @@
 #include "rt/ecs/Types.hpp"
 #include "common/Protocol.hpp"
 
+// Forward declare to satisfy tools that may not resolve include paths
+namespace rtype::net { enum class EntityType : std::uint8_t; }
+
 namespace rt::game {
 
 struct Transform { float x = 0.f; float y = 0.f; };
 struct Velocity { float vx = 0.f; float vy = 0.f; };
 struct ColorRGBA { std::uint32_t rgba = 0xFFFFFFFFu; };
-struct NetType { rtype::net::EntityType type = rtype::net::EntityType::Player; };
+struct NetType { rtype::net::EntityType type; };
 
 struct PlayerInput { std::uint8_t bits = 0; float speed = 150.f; };
 struct EnemyTag {};
@@ -18,7 +21,7 @@ enum class FormationType : std::uint8_t { None = 0, Snake, Line, GridRect, Trian
 // Component carried by formation origin entity
 struct Formation {
     FormationType type = FormationType::None;
-    float speedX = -80.f;
+    float speedX = -60.f;
     float amplitude = 60.f; // for snake
     float frequency = 2.0f; // for snake
     float spacing = 32.f;   // generic spacing
