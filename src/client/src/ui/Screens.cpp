@@ -337,7 +337,9 @@ void Screens::drawGameplay(ScreenState& screen) {
             if (e.y + shipH > h) e.y = (float)(h - shipH);
             DrawRectangle((int)e.x, (int)e.y, shipW, shipH, c);
         } else if (e.type == 2) { // Enemy
-            DrawCircle((int)e.x, (int)e.y, 10, c);
+            // Render enemies as rectangles instead of circles
+            int ew = 18, eh = 12;
+            DrawRectangle((int)e.x, (int)e.y, ew, eh, c);
         } else if (e.type == 3) { // Bullet
             DrawRectangle((int)e.x, (int)e.y, 6, 3, c);
         }
