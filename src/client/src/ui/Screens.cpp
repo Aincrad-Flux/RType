@@ -158,7 +158,7 @@ void Screens::drawMultiplayer(ScreenState& screen, MultiplayerForm& form) {
                 if (ok) {
                     _statusMessage = std::string("Player Connected.");
                     _connected = true;
-                    screen = ScreenState::Gameplay;
+                    screen = ScreenState::Waiting; // Change to Waiting state
                 } else {
                     _statusMessage = std::string("Connection failed.");
                     teardownNet();
@@ -263,6 +263,53 @@ void Screens::pumpNetworkOnce() {
     }
 }
 
+void Screens::drawWaiting(ScreenState& screen) {
+    int w = GetScreenWidth();
+    int h = GetScreenHeight();
+    int baseFont = baseFontFromHeight(h);
+
+    // Ensure socket is ready (in case we came here directly)
+    ensureNetSetup();
+
+    // Pump one network packet if available to update entities
+    pumpNetworkOnce();
+
+    // Count players in the latest world snapshot
+    int playerCount = 0;
+    for (const auto& e : _entities) {
+        if (e.type == 1) // Player
+            ++playerCount;
+    }
+
+    // UI
+    titleCentered("Waiting for players...", (int)(h * 0.25f), (int)(h * 0.08f), RAYWHITE);
+    std::string sub = "Players connected: " + std::to_string(playerCount) + "/2";
+    titleCentered(sub.c_str(), (int)(h * 0.40f), baseFont, RAYWHITE);
+
+    // Simple animated dots
+    int dots = ((int)(GetTime() * 2)) % 4; // 0..3
+    std::string hint = "The game will start automatically" + std::string(dots, '.');
+    titleCentered(hint.c_str(), (int)(h * 0.50f), baseFont, LIGHTGRAY);
+
+    // Cancel button
+    int btnWidth = (int)(w * 0.18f);
+    int btnHeight = (int)(h * 0.08f);
+    int x = (w - btnWidth) / 2;
+    int y = (int)(h * 0.70f);
+    if (button({(float)x, (float)y, (float)btnWidth, (float)btnHeight}, "Cancel", baseFont, BLACK, LIGHTGRAY, GRAY)) {
+        teardownNet();
+        _connected = false;
+        _entities.clear();
+        screen = ScreenState::Menu;
+        return;
+    }
+
+    // Transition to gameplay when at least 2 players are present
+    if (playerCount >= 2) {
+        screen = ScreenState::Gameplay;
+    }
+}
+
 void Screens::drawGameplay(ScreenState& screen) {
     if (!_connected) {
         titleCentered("Not connected. Press ESC.", GetScreenHeight()*0.5f, 24, RAYWHITE);
@@ -350,5 +397,3 @@ void Screens::drawGameplay(ScreenState& screen) {
 
 } // namespace ui
 } // namespace client
-
-
