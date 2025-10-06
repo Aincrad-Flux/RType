@@ -1,95 +1,51 @@
-#include "server/UdpServer.hpp"
+#include "UdpServer.hpp"
 #include <iostream>
 #include <cstring>
-#include <sstream>
-#include <iomanip>
-#include <vector>
-#include <unordered_set>
+#include <cmath>
+#include "rt/game/Components.hpp"
+#include "rt/game/Systems.hpp"
 
 namespace rtype::server {
 
-UdpServer::UdpServer(unsigned short port)
-    : socket_(io_, asio::ip::udp::endpoint(asio::ip::udp::v4(), port)) {}
+static std::string makeKey(const asio::ip::udp::endpoint& ep) {
+    return ep.address().to_string() + ":" + std::to_string(ep.port());
+}
 
-UdpServer::~UdpServer() { stop(); }
+UdpServer::UdpServer(unsigned short port)
+    : socket_(io_, asio::ip::udp::endpoint(asio::ip::udp::v4(), port)), rng_(std::random_device{}()) {}
+
+UdpServer::~UdpServer() {
+    stop();
+}
 
 void UdpServer::start() {
-    try {
-        auto ep = socket_.local_endpoint();
-        std::cout << "[server] Listening on " << ep.address().to_string() << ":" << ep.port() << " (UDP)\n";
-
-        // List host IPs
-        try {
-            asio::ip::udp::resolver res(io_);
-            auto host = asio::ip::host_name();
-            asio::ip::udp::resolver::results_type results = res.resolve(asio::ip::udp::v4(), host, "");
-            std::cout << "[server] Hostname: " << host << "\n";
-            std::cout << "[server] Addresses:" << "\n";
-            std::unordered_set<std::string> seen;
-            for (const auto &e : results) {
-                auto addr = e.endpoint().address().to_string();
-                if (seen.insert(addr).second) {
-                    std::cout << "  - " << addr << "\n";
-                }
-            }
-        } catch (...) {}
-    } catch (const std::exception& e) {
-        std::cout << "[server] start() info error: " << e.what() << "\n";
-    }
+    std::cout << "[server] Listening UDP on " << socket_.local_endpoint().port() << "\n";
     doReceive();
-    thread_ = std::jthread([this]{ io_.run(); });
+    running_ = true;
+    netThread_ = std::thread([this]{ io_.run(); });
+    gameThread_ = std::thread([this]{ gameLoop(); });
 }
 
 void UdpServer::stop() {
+    running_ = false;
     if (!io_.stopped()) io_.stop();
     if (socket_.is_open()) {
         asio::error_code ec; socket_.close(ec);
     }
+    if (netThread_.joinable()) netThread_.join();
+    if (gameThread_.joinable()) gameThread_.join();
 }
 
 void UdpServer::doReceive() {
     socket_.async_receive_from(
         asio::buffer(buffer_), remote_,
         [this](std::error_code ec, std::size_t n) {
-            if (n > 0) {
-                // Trace incoming packet
-                auto fromStr = remote_.address().to_string() + ":" + std::to_string(remote_.port());
-                std::ostringstream oss;
-                oss << std::hex << std::setfill('0');
-                for (std::size_t i = 0; i < n && i < 64; ++i) {
-                    oss << std::setw(2) << (static_cast<unsigned>(static_cast<unsigned char>(buffer_[i])))
-                        << (i + 1 < n && i + 1 < 64 ? ' ' : '\0');
-                }
-                std::cout << "[recv] " << n << "B from " << fromStr << " | hex: " << oss.str() << "\n";
-                if (!ec) {
-                    handlePacket(remote_, buffer_.data(), n);
-                }
-            }
-            if (ec) {
-                std::cout << "[recv-error] code=" << ec.value() << " msg='" << ec.message() << "'\n";
-            } else if (n == 0) {
-                std::cout << "[recv] 0B datagram received\n";
+            if (!ec && n >= sizeof(rtype::net::Header)) {
+                handlePacket(remote_, buffer_.data(), n);
             }
             if (!ec) doReceive();
         }
     );
-}
-
-void UdpServer::doSend(const asio::ip::udp::endpoint& to, const void* data, std::size_t size) {
-    auto buf = std::make_shared<std::vector<char>>(static_cast<const char*>(data), static_cast<const char*>(data)+size);
-    // Trace outgoing packet
-    try {
-        auto toStr = to.address().to_string() + ":" + std::to_string(to.port());
-        std::ostringstream oss;
-        oss << std::hex << std::setfill('0');
-        for (std::size_t i = 0; i < buf->size() && i < 64; ++i) {
-            oss << std::setw(2) << (static_cast<unsigned>(static_cast<unsigned char>((*buf)[i])))
-                << (i + 1 < buf->size() && i + 1 < 64 ? ' ' : '\0');
-        }
-        std::cout << "[send] " << buf->size() << "B to " << toStr << " | hex: " << oss.str() << "\n";
-    } catch (...) {}
-    socket_.async_send_to(asio::buffer(*buf), to,
-        [buf](std::error_code, std::size_t){});
 }
 
 void UdpServer::handlePacket(const asio::ip::udp::endpoint& from, const char* data, std::size_t size) {
@@ -99,22 +55,117 @@ void UdpServer::handlePacket(const asio::ip::udp::endpoint& from, const char* da
     const char* payload = data + sizeof(rtype::net::Header);
     std::size_t payloadSize = size - sizeof(rtype::net::Header);
 
+    auto key = makeKey(from);
     if (header->type == rtype::net::MsgType::Hello) {
-        std::string username(payload, payload + payloadSize);
-        std::string key = from.address().to_string() + ":" + std::to_string(from.port());
-        endpointToUsername_[key] = username;
-
-        // Build HelloAck + "OK"
-        rtype::net::Header ackHdr{0, rtype::net::MsgType::HelloAck, rtype::net::ProtocolVersion};
-        const char* ok = "OK";
-        std::uint16_t okLen = 2;
-        ackHdr.size = okLen;
-        std::array<char, sizeof(rtype::net::Header) + 2> out{};
-        std::memcpy(out.data(), &ackHdr, sizeof(ackHdr));
-        std::memcpy(out.data() + sizeof(ackHdr), ok, okLen);
-        doSend(from, out.data(), out.size());
-        std::cout << "[hello] user='" << username << "' from " << key << "\n";
+        keyToEndpoint_[key] = from;
+        if (endpointToPlayerId_.find(key) == endpointToPlayerId_.end()) {
+            // Create a player entity in ECS
+            auto e = reg_.create();
+            reg_.emplace<rt::game::Transform>(e, {50.f, 100.f + static_cast<float>(endpointToPlayerId_.size()) * 40.f});
+            reg_.emplace<rt::game::Velocity>(e, {0.f, 0.f});
+            reg_.emplace<rt::game::NetType>(e, {rtype::net::EntityType::Player});
+            reg_.emplace<rt::game::ColorRGBA>(e, {0x55AAFFFFu});
+            reg_.emplace<rt::game::PlayerInput>(e, {0, 150.f});
+            reg_.emplace<rt::game::Shooter>(e, {0.f, 0.15f, 320.f});
+            reg_.emplace<rt::game::Size>(e, {20.f, 12.f});
+            endpointToPlayerId_[key] = e;
+            playerInputBits_[e] = 0;
+        }
+        // Reply HelloAck
+        rtype::net::Header ack{0, rtype::net::MsgType::HelloAck, rtype::net::ProtocolVersion};
+        doSend(from, &ack, sizeof(ack));
+        return;
     }
+
+    if (header->type == rtype::net::MsgType::Input) {
+        if (payloadSize >= sizeof(rtype::net::InputPacket)) {
+            auto* in = reinterpret_cast<const rtype::net::InputPacket*>(payload);
+            auto it = endpointToPlayerId_.find(key);
+            if (it != endpointToPlayerId_.end()) {
+                playerInputBits_[it->second] = in->bits;
+                if (auto* pi = reg_.get<rt::game::PlayerInput>(it->second)) pi->bits = in->bits;
+            }
+        }
+        return;
+    }
+}
+
+void UdpServer::gameLoop() {
+    using clock = std::chrono::steady_clock;
+    const double tickRate = 60.0;
+    const double dt = 1.0 / tickRate;
+    auto next = clock::now();
+    float elapsed = 0.f;
+    // Install systems once
+    reg_.addSystem(std::make_unique<rt::game::InputSystem>());
+    reg_.addSystem(std::make_unique<rt::game::ShootingSystem>());
+    reg_.addSystem(std::make_unique<rt::game::FormationSystem>(&elapsed));
+    reg_.addSystem(std::make_unique<rt::game::MovementSystem>());
+    reg_.addSystem(std::make_unique<rt::game::EnemyShootingSystem>(rng_));
+    reg_.addSystem(std::make_unique<rt::game::DespawnOffscreenSystem>(-50.f));
+    // Despawn bullets that leave screen (x: -50..1000, y: -50..600)
+    reg_.addSystem(std::make_unique<rt::game::DespawnOutOfBoundsSystem>(-50.f, 1000.f, -50.f, 600.f));
+    reg_.addSystem(std::make_unique<rt::game::CollisionSystem>());
+    reg_.addSystem(std::make_unique<rt::game::FormationSpawnSystem>(rng_, &elapsed));
+
+    while (running_) {
+        next += std::chrono::duration_cast<clock::duration>(std::chrono::duration<double>(dt));
+    elapsed += static_cast<float>(dt);
+
+        // Tick ECS
+        reg_.update(static_cast<float>(dt));
+
+        broadcastState();
+
+        std::this_thread::sleep_until(next);
+    }
+}
+
+
+void UdpServer::broadcastState() {
+    // Build State packet
+    rtype::net::Header hdr{};
+    hdr.version = rtype::net::ProtocolVersion;
+    hdr.type = rtype::net::MsgType::State;
+    rtype::net::StateHeader sh{};
+    // collect ECS entities with NetType for serialization
+    std::vector<rtype::net::PackedEntity> net;
+    net.reserve(512);
+    auto& types = reg_.storage<rt::game::NetType>().data();
+    for (auto& [e, nt] : types) {
+        auto* tr = reg_.get<rt::game::Transform>(e);
+        auto* ve = reg_.get<rt::game::Velocity>(e);
+        auto* co = reg_.get<rt::game::ColorRGBA>(e);
+        if (!tr || !ve || !co) continue;
+        rtype::net::PackedEntity pe{};
+        pe.id = e;
+        pe.type = nt.type;
+        pe.x = tr->x; pe.y = tr->y;
+        pe.vx = ve->vx; pe.vy = ve->vy;
+        pe.rgba = co->rgba;
+        net.push_back(pe);
+        if (net.size() >= 512) break;
+    }
+    sh.count = static_cast<std::uint16_t>(net.size());
+
+    std::size_t payloadSize = sizeof(rtype::net::StateHeader) + net.size() * sizeof(rtype::net::PackedEntity);
+    hdr.size = static_cast<std::uint16_t>(payloadSize);
+
+    std::vector<char> out(sizeof(rtype::net::Header) + payloadSize);
+    std::memcpy(out.data(), &hdr, sizeof(hdr));
+    std::memcpy(out.data() + sizeof(hdr), &sh, sizeof(sh));
+    auto* arr = reinterpret_cast<rtype::net::PackedEntity*>(out.data() + sizeof(hdr) + sizeof(sh));
+    for (std::uint16_t i = 0; i < sh.count; ++i) arr[i] = net[i];
+
+    for (const auto& [key, ep] : keyToEndpoint_) {
+        doSend(ep, out.data(), out.size());
+    }
+}
+
+void UdpServer::doSend(const asio::ip::udp::endpoint& to, const void* data, std::size_t size) {
+    auto buf = std::make_shared<std::vector<char>>(static_cast<const char*>(data), static_cast<const char*>(data)+size);
+    socket_.async_send_to(asio::buffer(*buf), to,
+        [buf](std::error_code, std::size_t){});
 }
 
 }
