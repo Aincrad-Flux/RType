@@ -101,6 +101,7 @@ void UdpServer::gameLoop() {
     reg_.addSystem(std::make_unique<rt::game::ShootingSystem>());
     reg_.addSystem(std::make_unique<rt::game::FormationSystem>(&elapsed));
     reg_.addSystem(std::make_unique<rt::game::MovementSystem>());
+    reg_.addSystem(std::make_unique<rt::game::EnemyShootingSystem>(rng_));
     reg_.addSystem(std::make_unique<rt::game::DespawnOffscreenSystem>(-50.f));
     // Despawn bullets that leave screen (x: -50..1000, y: -50..600)
     reg_.addSystem(std::make_unique<rt::game::DespawnOutOfBoundsSystem>(-50.f, 1000.f, -50.f, 600.f));
