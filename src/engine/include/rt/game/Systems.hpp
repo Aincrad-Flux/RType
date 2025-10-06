@@ -22,6 +22,15 @@ class ShootingSystem : public rt::ecs::System {
     void update(rt::ecs::Registry& r, float dt) override;
 };
 
+// Enemy AI shooting towards players with limited accuracy
+class EnemyShootingSystem : public rt::ecs::System {
+  public:
+    EnemyShootingSystem(std::mt19937& rng) : rng_(rng) {}
+    void update(rt::ecs::Registry& r, float dt) override;
+  private:
+    std::mt19937& rng_;
+};
+
 class FormationSystem : public rt::ecs::System {
   public:
     FormationSystem(float* elapsedPtr) : t_(elapsedPtr) {}
@@ -62,6 +71,7 @@ class FormationSpawnSystem : public rt::ecs::System {
     rt::ecs::Entity spawnLine(rt::ecs::Registry& r, float y, int count);
     rt::ecs::Entity spawnGrid(rt::ecs::Registry& r, float y, int rows, int cols);
     rt::ecs::Entity spawnTriangle(rt::ecs::Registry& r, float y, int rows);
+    rt::ecs::Entity spawnBigShooters(rt::ecs::Registry& r, float y, int count);
 };
 
 // Handle simple AABB collisions: bullets vs enemies
