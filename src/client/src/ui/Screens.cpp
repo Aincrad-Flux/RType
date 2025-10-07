@@ -507,7 +507,7 @@ void Screens::drawGameplay(ScreenState& screen) {
                 float drawW = _enemyFrameW * 1.1f; // slight upscale for visibility
                 float drawH = _enemyFrameH * 1.1f;
                 // Shift about twenty pixels to the left
-                float dstX = e.x - 70.0f;//aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+                float dstX = e.x - 20.0f;
                 float dstY = e.y;
                 int w = GetScreenWidth();
                 int h = GetScreenHeight();
@@ -524,7 +524,7 @@ void Screens::drawGameplay(ScreenState& screen) {
                 DrawRectangleLines((int)dst.x, (int)dst.y, (int)dst.width, (int)dst.height, (Color){255, 0, 0, 200});
             } else {
                 int ew = 18, eh = 12;
-                float dstX = e.x - 70.0f;//spriteaaaaaaaaaaaaaaaaaaaaa
+                float dstX = e.x - 20.0f;
                 float dstY = e.y;
                 int w = GetScreenWidth();
                 int h = GetScreenHeight();
