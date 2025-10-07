@@ -158,7 +158,7 @@ void Screens::drawMultiplayer(ScreenState& screen, MultiplayerForm& form) {
                 if (ok) {
                     _statusMessage = std::string("Player Connected.");
                     _connected = true;
-                    screen = ScreenState::Waiting; // Change to Waiting state
+                    screen = ScreenState::Waiting;
                 } else {
                     _statusMessage = std::string("Connection failed.");
                     teardownNet();
@@ -277,7 +277,7 @@ void Screens::drawWaiting(ScreenState& screen) {
     // Count players in the latest world snapshot
     int playerCount = 0;
     for (const auto& e : _entities) {
-        if (e.type == 1) // Player
+        if (e.type == 1)
             ++playerCount;
     }
 
@@ -287,7 +287,7 @@ void Screens::drawWaiting(ScreenState& screen) {
     titleCentered(sub.c_str(), (int)(h * 0.40f), baseFont, RAYWHITE);
 
     // Simple animated dots
-    int dots = ((int)(GetTime() * 2)) % 4; // 0..3
+    int dots = ((int)(GetTime() * 2)) % 4;
     std::string hint = "The game will start automatically" + std::string(dots, '.');
     titleCentered(hint.c_str(), (int)(h * 0.50f), baseFont, LIGHTGRAY);
 
