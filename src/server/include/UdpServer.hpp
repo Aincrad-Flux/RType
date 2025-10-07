@@ -23,6 +23,8 @@ class UdpServer {
     void handlePacket(const asio::ip::udp::endpoint& from, const char* data, std::size_t size);
     void gameLoop();
     void broadcastState();
+    void checkTimeouts();
+    void removeClient(const std::string& key);
 
     asio::io_context io_;
     asio::ip::udp::socket socket_;
@@ -39,6 +41,8 @@ class UdpServer {
     // ECS registry holds all entities/components
     rt::ecs::Registry reg_;
     std::mt19937 rng_;
+    std::unordered_map<std::string,
+    std::chrono::steady_clock::time_point> lastSeen_;
 };
 
 }
