@@ -5,7 +5,9 @@
 #include <memory>
 #include <iostream>
 #include <vector>
+#include <algorithm>
 #include <cstring>
+#include <string>
 #include "common/Protocol.hpp"
 
 namespace client {
@@ -31,6 +33,45 @@ void Screens::logMessage(const std::string& msg, const char* level) {
         std::cout << "[" << level << "] " << msg << std::endl;
     else
         std::cout << "[INFO] " << msg << std::endl;
+}
+
+// --- Spritesheet helpers ---
+std::string Screens::findSpritePath(const char* name) const {
+    std::vector<std::string> candidates;
+    candidates.emplace_back(std::string("sprites/") + name);           // repo root
+    candidates.emplace_back(std::string("../../sprites/") + name);     // build/bin
+    candidates.emplace_back(std::string("../sprites/") + name);        // build/
+    candidates.emplace_back(std::string("../../../sprites/") + name);  // client run
+    for (const auto& c : candidates) {
+        if (FileExists(c.c_str())) return c;
+    }
+    return {};
+}
+
+void Screens::loadSprites() {
+    if (_sheetLoaded) return;
+    std::string path = findSpritePath("r-typesheet42.gif");
+    if (path.empty()) {
+        logMessage("Spritesheet r-typesheet42.gif not found.", "WARN");
+        return;
+    }
+    _sheet = LoadTexture(path.c_str());
+    if (_sheet.id == 0) {
+        logMessage("Failed to load spritesheet texture.", "ERROR");
+        return;
+    }
+    _sheetLoaded = true;
+    _frameW = (float)_sheet.width / (float)_sheetCols;
+    _frameH = (float)_sheet.height / (float)_sheetRows;
+    logMessage("Spritesheet loaded: " + std::to_string(_sheet.width) + "x" + std::to_string(_sheet.height) +
+               ", frame " + std::to_string((int)_frameW) + "x" + std::to_string((int)_frameH), "INFO");
+}
+
+Screens::~Screens() {
+    if (_sheetLoaded) {
+        UnloadTexture(_sheet);
+        _sheetLoaded = false;
+    }
 }
 
 void Screens::drawMenu(ScreenState& screen) {
@@ -219,6 +260,9 @@ void Screens::teardownNet() {
     }
     g.sock.reset();
     g.io.reset();
+    // Reset sprite assignments when disconnecting
+    _spriteRowById.clear();
+    _nextSpriteRow = 0;
 }
 
 void Screens::sendInput(std::uint8_t bits) {
@@ -317,6 +361,9 @@ void Screens::drawGameplay(ScreenState& screen) {
     }
     ensureNetSetup();
 
+    // Lazy-load spritesheet
+    if (!_sheetLoaded) loadSprites();
+
     // Input bits
     std::uint8_t bits = 0;
     if (IsKeyDown(KEY_LEFT))  bits |= rtype::net::InputLeft;
@@ -370,21 +417,43 @@ void Screens::drawGameplay(ScreenState& screen) {
         titleCentered("Connecting to game...", (int)(GetScreenHeight()*0.5f), 24, RAYWHITE);
     }
 
-    // Render entities as simple shapes
-    for (auto& e : _entities) {
+    // Render entities using persistent sprite-row assignment per player id
+    for (std::size_t i = 0; i < _entities.size(); ++i) {
+        auto& e = _entities[i];
         Color c = {(unsigned char)((e.rgba>>24)&0xFF),(unsigned char)((e.rgba>>16)&0xFF),(unsigned char)((e.rgba>>8)&0xFF),(unsigned char)(e.rgba&0xFF)};
-        if (e.type == 1) { // Player (on applique les contraintes)
-            // Taille du vaisseau
-            int shipW = 20, shipH = 12;
-            // Empêcher de passer sous le HUD
-            if (e.y < hudBottom) e.y = (float)hudBottom;
-            // Empêcher de sortir de l'écran
-            if (e.x < 0) e.x = 0;
-            if (e.x + shipW > w) e.x = (float)(w - shipW);
-            if (e.y + shipH > h) e.y = (float)(h - shipH);
-            DrawRectangle((int)e.x, (int)e.y, shipW, shipH, c);
+        if (e.type == 1) { // Player
+            // Get or assign a fixed row for this player id
+            int rowIndex;
+            auto it = _spriteRowById.find(e.id);
+            if (it == _spriteRowById.end()) {
+                rowIndex = _nextSpriteRow % _sheetRows; // first joiner -> 0, second -> 1, etc.
+                _spriteRowById[e.id] = rowIndex;
+                _nextSpriteRow++;
+            } else {
+                rowIndex = it->second;
+            }
+            if (_sheetLoaded && _frameW > 0 && _frameH > 0) {
+                int colIndex = 2; // middle column (3rd)
+                const float playerScale = 1.18f;
+                float drawW = _frameW * playerScale;
+                float drawH = _frameH * playerScale;
+                if (e.y < hudBottom) e.y = (float)hudBottom;
+                if (e.x < 0) e.x = 0;
+                if (e.x + drawW > w) e.x = (float)(w - drawW);
+                if (e.y + drawH > h) e.y = (float)(h - drawH);
+                Rectangle src{ _frameW * colIndex, _frameH * rowIndex, _frameW, _frameH };
+                Rectangle dst{ e.x, e.y, drawW, drawH };
+                Vector2 origin{ 0.0f, 0.0f };
+                DrawTexturePro(_sheet, src, dst, origin, 0.0f, WHITE);
+            } else {
+                int shipW = 24, shipH = 14;
+                if (e.y < hudBottom) e.y = (float)hudBottom;
+                if (e.x < 0) e.x = 0;
+                if (e.x + shipW > w) e.x = (float)(w - shipW);
+                if (e.y + shipH > h) e.y = (float)(h - shipH);
+                DrawRectangle((int)e.x, (int)e.y, shipW, shipH, c);
+            }
         } else if (e.type == 2) { // Enemy
-            // Enemies: clamp to playable vertical area so they don't overlap HUD or go below screen
             int ew = 18, eh = 12;
             if (e.y < hudBottom) e.y = (float)hudBottom;
             if (e.y + eh > h) e.y = (float)(h - eh);
