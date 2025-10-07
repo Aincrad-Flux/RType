@@ -3,5 +3,6 @@ add_library(rtype_common
 )
 
 target_include_directories(rtype_common
-    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
 )

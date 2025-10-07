@@ -1,9 +1,9 @@
 add_executable(r-type_server
-    main.cpp
-    UdpServer.cpp
+    src/main.cpp
+    src/UdpServer.cpp
 )
 
-target_include_directories(r-type_server PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(r-type_server PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 find_package(asio REQUIRED)
 

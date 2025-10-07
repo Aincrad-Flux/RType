@@ -1,0 +1,66 @@
+#include "../../include/client/ui/App.hpp"
+#include <raylib.h>
+#include <cmath>
+
+namespace client {
+namespace ui {
+
+static void drawStarfield(float t) {
+    for (int i = 0; i < 300; ++i) {
+        float x = fmodf((i * 73 + t * 60), (float)GetScreenWidth());
+        float y = (i * 37) % GetScreenHeight();
+        DrawPixel((int)x, (int)y, (i % 7 == 0) ? RAYWHITE : DARKGRAY);
+    }
+}
+
+App::App() : _screen(ScreenState::Menu) {}
+
+void App::run() {
+    const int screenWidth = 960;
+    const int screenHeight = 540;
+    SetConfigFlags(FLAG_WINDOW_RESIZABLE);
+    InitWindow(screenWidth, screenHeight, "R-Type Client");
+    // Prevent ESC from closing the whole window; we handle ESC ourselves
+    SetExitKey(KEY_NULL);
+    SetTargetFPS(60);
+
+    float t = 0.f;
+    while (!WindowShouldClose() && _screen != ScreenState::Exiting) {
+        float dt = GetFrameTime();
+        t += dt;
+
+        if (IsKeyPressed(KEY_ESCAPE)) {
+            if (_screen == ScreenState::Menu) _screen = ScreenState::Exiting;
+            else _screen = ScreenState::Menu;
+        }
+
+        BeginDrawing();
+        ClearBackground(BLACK);
+        drawStarfield(t);
+
+        switch (_screen) {
+            case ScreenState::Menu: _screens.drawMenu(_screen); break;
+            case ScreenState::Singleplayer: _screens.drawSingleplayer(_screen, _singleForm); break;
+            case ScreenState::Multiplayer: _screens.drawMultiplayer(_screen, _form); break;
+            case ScreenState::Gameplay:
+                if (!_resizedForGameplay) {
+                    SetWindowSize(screenWidth * 1, screenHeight * 1);
+                    _resizedForGameplay = true;
+                }
+                _screens.drawGameplay(_screen);
+                break;
+            case ScreenState::Options: _screens.drawOptions(); break;
+            case ScreenState::Leaderboard: _screens.drawLeaderboard(); break;
+            case ScreenState::Exiting: break;
+        }
+
+        EndDrawing();
+    }
+
+    CloseWindow();
+}
+
+} // namespace ui
+} // namespace client
+
+
