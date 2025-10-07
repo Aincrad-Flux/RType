@@ -67,10 +67,39 @@ void Screens::loadSprites() {
                ", frame " + std::to_string((int)_frameW) + "x" + std::to_string((int)_frameH), "INFO");
 }
 
+void Screens::loadEnemySprites() {
+    if (_enemyLoaded) return;
+    std::string path = findSpritePath("r-typesheet19.gif");
+    if (path.empty()) {
+        logMessage("Enemy spritesheet r-typesheet19.gif not found.", "WARN");
+        return;
+    }
+    _enemySheet = LoadTexture(path.c_str());
+    if (_enemySheet.id == 0) {
+        logMessage("Failed to load enemy spritesheet texture.", "ERROR");
+        return;
+    }
+    _enemyLoaded = true;
+    // Per user spec: r-typesheet19.gif (230x97) is a 7x3 grid
+    _enemyCols = 7;
+    _enemyRows = 3;
+
+    _enemyFrameW = (float)_enemySheet.width / (float)_enemyCols;
+    _enemyFrameH = (float)_enemySheet.height / (float)_enemyRows;
+    logMessage(
+        "Enemy sheet loaded: " + std::to_string(_enemySheet.width) + "x" + std::to_string(_enemySheet.height) +
+        ", grid " + std::to_string(_enemyCols) + "x" + std::to_string(_enemyRows) +
+        ", frame " + std::to_string((int)_enemyFrameW) + "x" + std::to_string((int)_enemyFrameH), "INFO");
+}
+
 Screens::~Screens() {
     if (_sheetLoaded) {
         UnloadTexture(_sheet);
         _sheetLoaded = false;
+    }
+    if (_enemyLoaded) {
+        UnloadTexture(_enemySheet);
+        _enemyLoaded = false;
     }
 }
 
@@ -363,6 +392,7 @@ void Screens::drawGameplay(ScreenState& screen) {
 
     // Lazy-load spritesheet
     if (!_sheetLoaded) loadSprites();
+    if (!_enemyLoaded) loadEnemySprites();
 
     // Input bits
     std::uint8_t bits = 0;
@@ -437,27 +467,75 @@ void Screens::drawGameplay(ScreenState& screen) {
                 const float playerScale = 1.18f;
                 float drawW = _frameW * playerScale;
                 float drawH = _frameH * playerScale;
-                if (e.y < hudBottom) e.y = (float)hudBottom;
-                if (e.x < 0) e.x = 0;
-                if (e.x + drawW > w) e.x = (float)(w - drawW);
-                if (e.y + drawH > h) e.y = (float)(h - drawH);
+                // Apply a small left offset and clamp using destination coords
+                const float xOffset = -6.0f; // shift a few pixels left
+                float dstX = e.x + xOffset;
+                float dstY = e.y;
+                int w = GetScreenWidth();
+                int h = GetScreenHeight();
+                int hudBottom = 16 + (int)(GetScreenHeight() * 0.045f); // approximate; already computed above in original code
+                if (dstY < hudBottom) dstY = (float)hudBottom;
+                if (dstX < 0) dstX = 0;
+                if (dstX + drawW > w) dstX = (float)(w - drawW);
+                if (dstY + drawH > h) dstY = (float)(h - drawH);
                 Rectangle src{ _frameW * colIndex, _frameH * rowIndex, _frameW, _frameH };
-                Rectangle dst{ e.x, e.y, drawW, drawH };
+                Rectangle dst{ dstX, dstY, drawW, drawH };
                 Vector2 origin{ 0.0f, 0.0f };
                 DrawTexturePro(_sheet, src, dst, origin, 0.0f, WHITE);
+                // Draw hitbox of the ship (player)
+                DrawRectangleLines((int)dst.x, (int)dst.y, (int)dst.width, (int)dst.height, (Color){0, 255, 0, 200});
             } else {
                 int shipW = 24, shipH = 14;
-                if (e.y < hudBottom) e.y = (float)hudBottom;
-                if (e.x < 0) e.x = 0;
-                if (e.x + shipW > w) e.x = (float)(w - shipW);
-                if (e.y + shipH > h) e.y = (float)(h - shipH);
-                DrawRectangle((int)e.x, (int)e.y, shipW, shipH, c);
+                const float xOffset = -6.0f;
+                float dstX = e.x + xOffset;
+                float dstY = e.y;
+                int w = GetScreenWidth();
+                int h = GetScreenHeight();
+                int hudBottom = 16 + (int)(GetScreenHeight() * 0.045f);
+                if (dstY < hudBottom) dstY = (float)hudBottom;
+                if (dstX < 0) dstX = 0;
+                if (dstX + shipW > w) dstX = (float)(w - shipW);
+                if (dstY + shipH > h) dstY = (float)(h - shipH);
+                DrawRectangle((int)dstX, (int)dstY, shipW, shipH, c);
+                DrawRectangleLines((int)dstX, (int)dstY, shipW, shipH, (Color){0, 255, 0, 200});
             }
-        } else if (e.type == 2) {
-            int ew = 18, eh = 12;
-            if (e.y < hudBottom) e.y = (float)hudBottom;
-            if (e.y + eh > h) e.y = (float)(h - eh);
-            DrawRectangle((int)e.x, (int)e.y, ew, eh, c);
+        } else if (e.type == 2) { // Enemy
+            if (_enemyLoaded && _enemyFrameW > 0 && _enemyFrameH > 0) {
+                // Per user spec: choose sprite at column 5, row 3 (1-based) on a 7x3 grid
+                const int colIndex = 4; // zero-based
+                const int rowIndex = 2; // zero-based
+                float drawW = _enemyFrameW * 1.1f; // slight upscale for visibility
+                float drawH = _enemyFrameH * 1.1f;
+                // Shift about twenty pixels to the left
+                float dstX = e.x - 70.0f;//aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+                float dstY = e.y;
+                int w = GetScreenWidth();
+                int h = GetScreenHeight();
+                int hudBottom = 16 + (int)(GetScreenHeight() * 0.045f);
+                if (dstY < hudBottom) dstY = (float)hudBottom;
+                if (dstY + drawH > h) dstY = (float)(h - drawH);
+                if (dstX < 0) dstX = 0;
+                if (dstX + drawW > w) dstX = (float)(w - drawW);
+                Rectangle src{ _enemyFrameW * colIndex, _enemyFrameH * rowIndex, _enemyFrameW, _enemyFrameH };
+                Rectangle dst{ dstX, dstY, drawW, drawH };
+                Vector2 origin{ 0.0f, 0.0f };
+                DrawTexturePro(_enemySheet, src, dst, origin, 0.0f, WHITE);
+                // Draw hitbox for the enemy ship too (for clarity)
+                DrawRectangleLines((int)dst.x, (int)dst.y, (int)dst.width, (int)dst.height, (Color){255, 0, 0, 200});
+            } else {
+                int ew = 18, eh = 12;
+                float dstX = e.x - 70.0f;//spriteaaaaaaaaaaaaaaaaaaaaa
+                float dstY = e.y;
+                int w = GetScreenWidth();
+                int h = GetScreenHeight();
+                int hudBottom = 16 + (int)(GetScreenHeight() * 0.045f);
+                if (dstY < hudBottom) dstY = (float)hudBottom;
+                if (dstY + eh > h) dstY = (float)(h - eh);
+                if (dstX < 0) dstX = 0;
+                if (dstX + ew > w) dstX = (float)(w - ew);
+                DrawRectangle((int)dstX, (int)dstY, ew, eh, c);
+                DrawRectangleLines((int)dstX, (int)dstY, ew, eh, (Color){255, 0, 0, 200});
+            }
         } else if (e.type == 3) {
             DrawRectangle((int)e.x, (int)e.y, 6, 3, c);
         }
