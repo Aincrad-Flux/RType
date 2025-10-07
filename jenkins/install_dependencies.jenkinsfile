@@ -1,0 +1,64 @@
+pipeline {
+    agent {
+        docker {
+            image 'debian:bookworm'
+            args '-u root:root --privileged'
+        }
+    }
+
+    parameters {
+        string(name: 'SOURCE_REPO', defaultValue: 'https://github.com/Aincrad-Flux/RType.git', description: 'URL of the repo to clone for setup')
+        string(name: 'BRANCH_NAME', defaultValue: 'main', description: 'Branch to test')
+    }
+
+    stages {
+        stage('Clone Repository') {
+            steps {
+                echo "Cloning branch: ${params.BRANCH_NAME} from ${params.SOURCE_REPO}"
+                git branch: "${params.BRANCH_NAME}",
+                    url: "${params.SOURCE_REPO}",
+                    credentialsId: 'github-https-token'
+            }
+        }
+
+        stage('Setup Conan') {
+            steps {
+                sh '''
+                    echo "Installing system dependencies..."
+                    apt-get update
+                    apt-get install -y build-essential cmake git python3-pip python3-venv
+
+                    echo "Installing Conan 2..."
+                    pip3 install --break-system-packages --upgrade conan
+
+                    echo "Configuring Conan 2..."
+                    conan --version
+
+                    # Detect profile for Conan 2.x
+                    conan profile detect --force
+                '''
+            }
+        }
+
+        stage('Install Dependencies') {
+            steps {
+                sh '''
+                    echo "Running setup..."
+                    make setup || true
+                '''
+            }
+        }
+    }
+
+    post {
+        success {
+            echo 'Pipeline completed successfully!'
+        }
+        failure {
+            echo 'Pipeline failed!'
+        }
+        always {
+            cleanWs()
+        }
+    }
+}

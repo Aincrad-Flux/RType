@@ -1,0 +1,114 @@
+pipeline {
+    agent {
+        docker {
+            image 'debian:bookworm'
+            args '-u root:root --privileged'
+        }
+    }
+
+    parameters {
+        string(name: 'SOURCE_REPO', defaultValue: 'https://github.com/Aincrad-Flux/RType.git', description: 'URL of the repo to clone for setup')
+        string(name: 'BRANCH_NAME', defaultValue: 'main', description: 'Branch to test')
+    }
+
+    stages {
+        stage('Clone Repository') {
+            steps {
+                echo "Cloning branch: ${params.BRANCH_NAME} from ${params.SOURCE_REPO}"
+                git branch: "${params.BRANCH_NAME}",
+                    url: "${params.SOURCE_REPO}",
+                    credentialsId: 'github-https-token'
+            }
+        }
+
+        stage('Setup Conan') {
+            steps {
+                sh '''
+                    apt-get update -qq > /dev/null
+                    apt-get install -y build-essential cmake git python3-pip python3-venv pkg-config > /dev/null 2>&1
+                    pip3 install --break-system-packages --upgrade conan > /dev/null 2>&1
+
+                    echo "Configuring Conan 2..."
+                    conan --version
+
+                '''
+            }
+        }
+
+        stage('Install Dependencies') {
+            steps {
+                sh '''
+                    echo "Running setup..."
+                    make setup || true
+                '''
+            }
+        }
+
+        stage('Build project') {
+            steps {
+                sh '''
+                    echo "Running build..."
+                    make re
+                '''
+            }
+        }
+
+        stage('Check Binaries') {
+            steps {
+                sh '''
+                    echo "Verifying binaries existence..."
+                    if [ ! -f "r-type_client" ] || [ ! -f "r-type_server" ]; then
+                        echo "❌ One or both binaries are missing!"
+                        exit 1
+                    fi
+
+                    if [ ! -x "r-type_client" ] || [ ! -x "r-type_server" ]; then
+                        echo "⚠️ One or both binaries are not executable, fixing permissions..."
+                        chmod +x r-type_client r-type_server
+                    fi
+
+                    echo "✅ Both binaries are present and ready."
+                    ls -lh r-type_client r-type_server
+                '''
+            }
+        }
+
+        stage('Archive Binaries') {
+            steps {
+                archiveArtifacts artifacts: 'r-type_client, r-type_server',
+                                 fingerprint: true,
+                                 allowEmptyArchive: false
+            }
+        }
+
+        stage('Send Binaries to MinIO') {
+            steps {
+                withAWS(
+                    credentials: 'minio-credentials',
+                    endpointUrl: 'http://192.168.1.184:9000',
+                    region: 'us-east-1',
+                ) {
+                    s3Upload(
+                        bucket: 'artifacts',
+                        path: "r-type/${params.BRANCH_NAME}/",
+                        includePathPattern: 'r-type_*',
+                        workingDir: '.'
+                    )
+                }
+            }
+        }
+
+    }
+
+    post {
+        success {
+            echo '✅ Pipeline completed successfully!'
+        }
+        failure {
+            echo '❌ Pipeline failed!'
+        }
+        always {
+            cleanWs()
+        }
+    }
+}
