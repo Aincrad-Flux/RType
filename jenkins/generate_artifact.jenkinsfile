@@ -7,49 +7,29 @@ pipeline {
     }
 
     parameters {
-        string(name: 'SOURCE_REPO', defaultValue: 'https://github.com/Aincrad-Flux/RType.git', description: 'URL of the repo to clone for setup')
-        string(name: 'BRANCH_NAME', defaultValue: 'main', description: 'Branch to test')
+        string(name: 'BRANCH_NAME', defaultValue: 'main', description: 'Branch label used for destination path in storage')
+        string(name: 'SOURCE_JOB', defaultValue: 'R-Type/Build All Binaires', description: 'Full name of the Jenkins job to copy artifacts from (including folder if any)')
+        string(name: 'SOURCE_BUILD_NUMBER', defaultValue: '', description: 'Specific build number to copy from (leave empty to use last successful)')
     }
 
     stages {
-        stage('Clone Repository') {
+        stage('Fetch Binaries from Upstream') {
             steps {
-                echo "Cloning branch: ${params.BRANCH_NAME} from ${params.SOURCE_REPO}"
-                git branch: "${params.BRANCH_NAME}",
-                    url: "${params.SOURCE_REPO}",
-                    credentialsId: 'github-https-token'
-            }
-        }
-
-        stage('Setup Conan') {
-            steps {
-                sh '''
-                    apt-get update -qq > /dev/null
-                    apt-get install -y build-essential cmake git python3-pip python3-venv pkg-config > /dev/null 2>&1
-                    pip3 install --break-system-packages --upgrade conan > /dev/null 2>&1
-
-                    echo "Configuring Conan 2..."
-                    conan --version
-
-                '''
-            }
-        }
-
-        stage('Install Dependencies') {
-            steps {
-                sh '''
-                    echo "Running setup..."
-                    make setup || true
-                '''
-            }
-        }
-
-        stage('Build project') {
-            steps {
-                sh '''
-                    echo "Running build..."
-                    make re
-                '''
+                script {
+                    if (params.SOURCE_BUILD_NUMBER?.trim()) {
+                        copyArtifacts(projectName: params.SOURCE_JOB,
+                                      selector: specific("${params.SOURCE_BUILD_NUMBER}"),
+                                      filter: 'build/bin/r-type_*',
+                                      fingerprintArtifacts: true,
+                                      flatten: false)
+                    } else {
+                        copyArtifacts(projectName: params.SOURCE_JOB,
+                                      selector: lastSuccessful(),
+                                      filter: 'build/bin/r-type_*',
+                                      fingerprintArtifacts: true,
+                                      flatten: false)
+                    }
+                }
             }
         }
 
