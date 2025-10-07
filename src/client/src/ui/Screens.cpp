@@ -38,10 +38,10 @@ void Screens::logMessage(const std::string& msg, const char* level) {
 // --- Spritesheet helpers ---
 std::string Screens::findSpritePath(const char* name) const {
     std::vector<std::string> candidates;
-    candidates.emplace_back(std::string("sprites/") + name);           // repo root
-    candidates.emplace_back(std::string("../../sprites/") + name);     // build/bin
-    candidates.emplace_back(std::string("../sprites/") + name);        // build/
-    candidates.emplace_back(std::string("../../../sprites/") + name);  // client run
+    candidates.emplace_back(std::string("sprites/") + name);
+    candidates.emplace_back(std::string("../../sprites/") + name);
+    candidates.emplace_back(std::string("../sprites/") + name);
+    candidates.emplace_back(std::string("../../../sprites/") + name);
     for (const auto& c : candidates) {
         if (FileExists(c.c_str())) return c;
     }
