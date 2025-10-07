@@ -57,25 +57,25 @@ pipeline {
             steps {
                 sh '''
                     echo "Verifying binaries existence..."
-                    if [ ! -f "r-type_client" ] || [ ! -f "r-type_server" ]; then
+                    if [ ! -f "build/bin/r-type_client" ] || [ ! -f "build/bin/r-type_server" ]; then
                         echo "❌ One or both binaries are missing!"
                         exit 1
                     fi
 
-                    if [ ! -x "r-type_client" ] || [ ! -x "r-type_server" ]; then
+                    if [ ! -x "build/bin/r-type_client" ] || [ ! -x "build/bin/r-type_server" ]; then
                         echo "⚠️ One or both binaries are not executable, fixing permissions..."
-                        chmod +x r-type_client r-type_server
+                        chmod +x build/bin/r-type_client build/bin/r-type_server
                     fi
 
                     echo "✅ Both binaries are present and ready."
-                    ls -lh r-type_client r-type_server
+                    ls -lh build/bin/r-type_client build/bin/r-type_server
                 '''
             }
         }
 
         stage('Archive Binaries') {
             steps {
-                archiveArtifacts artifacts: 'r-type_client, r-type_server',
+                archiveArtifacts artifacts: 'build/bin/r-type_client, build/bin/r-type_server',
                                  fingerprint: true,
                                  allowEmptyArchive: false
             }
@@ -91,7 +91,7 @@ pipeline {
                     s3Upload(
                         bucket: 'artifacts',
                         path: "r-type/${params.BRANCH_NAME}/",
-                        includePathPattern: 'r-type_*',
+                        includePathPattern: 'build/bin/r-type_*',
                         workingDir: '.'
                     )
                 }
