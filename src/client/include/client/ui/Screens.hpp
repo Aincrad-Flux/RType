@@ -42,7 +42,7 @@ public:
     static void logMessage(const std::string& msg, const char* level = "INFO");
     ~Screens();
 private:
-    int _focusedField = 0; // 0=user, 1=addr, 2=port
+    int _focusedField = 0;
     std::string _statusMessage;
     // network state for gameplay
     bool _connected = false;
@@ -62,13 +62,13 @@ private:
     std::string findSpritePath(const char* name) const;
     Texture2D _sheet{};
     bool _sheetLoaded = false;
-    int _sheetCols = 5; // spritesheet is 5x5 per user spec
+    int _sheetCols = 5;
     int _sheetRows = 5;
     float _frameW = 0.f;
     float _frameH = 0.f;
     // Fixed sprite assignment per player id
-    std::unordered_map<unsigned, int> _spriteRowById; // id -> row index
-    int _nextSpriteRow = 0; // next row to assign on first sight
+    std::unordered_map<unsigned, int> _spriteRowById;
+    int _nextSpriteRow = 0;
 };
 
 } // namespace ui

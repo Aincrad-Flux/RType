@@ -421,19 +421,19 @@ void Screens::drawGameplay(ScreenState& screen) {
     for (std::size_t i = 0; i < _entities.size(); ++i) {
         auto& e = _entities[i];
         Color c = {(unsigned char)((e.rgba>>24)&0xFF),(unsigned char)((e.rgba>>16)&0xFF),(unsigned char)((e.rgba>>8)&0xFF),(unsigned char)(e.rgba&0xFF)};
-        if (e.type == 1) { // Player
+        if (e.type == 1) {
             // Get or assign a fixed row for this player id
             int rowIndex;
             auto it = _spriteRowById.find(e.id);
             if (it == _spriteRowById.end()) {
-                rowIndex = _nextSpriteRow % _sheetRows; // first joiner -> 0, second -> 1, etc.
+                rowIndex = _nextSpriteRow % _sheetRows;
                 _spriteRowById[e.id] = rowIndex;
                 _nextSpriteRow++;
             } else {
                 rowIndex = it->second;
             }
             if (_sheetLoaded && _frameW > 0 && _frameH > 0) {
-                int colIndex = 2; // middle column (3rd)
+                int colIndex = 2;
                 const float playerScale = 1.18f;
                 float drawW = _frameW * playerScale;
                 float drawH = _frameH * playerScale;
@@ -453,12 +453,12 @@ void Screens::drawGameplay(ScreenState& screen) {
                 if (e.y + shipH > h) e.y = (float)(h - shipH);
                 DrawRectangle((int)e.x, (int)e.y, shipW, shipH, c);
             }
-        } else if (e.type == 2) { // Enemy
+        } else if (e.type == 2) {
             int ew = 18, eh = 12;
             if (e.y < hudBottom) e.y = (float)hudBottom;
             if (e.y + eh > h) e.y = (float)(h - eh);
             DrawRectangle((int)e.x, (int)e.y, ew, eh, c);
-        } else if (e.type == 3) { // Bullet
+        } else if (e.type == 3) {
             DrawRectangle((int)e.x, (int)e.y, 6, 3, c);
         }
     }
