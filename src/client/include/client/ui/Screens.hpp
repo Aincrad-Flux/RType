@@ -49,11 +49,13 @@ private:
     // lightweight UDP client
     void ensureNetSetup();
     void teardownNet();
+    void sendDisconnect();
     void sendInput(std::uint8_t bits);
     void pumpNetworkOnce();
     struct PackedEntity { unsigned id; unsigned char type; float x; float y; float vx; float vy; unsigned rgba; };
     std::vector<PackedEntity> _entities;
     double _lastSend = 0.0;
+    bool _serverReturnToMenu = false;
 };
 
 } // namespace ui

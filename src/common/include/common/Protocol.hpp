@@ -12,7 +12,10 @@ enum class MsgType : std::uint8_t {
     Spawn,
     Despawn,
     Ping,
-    Pong
+    Pong,
+    // New messages
+    Disconnect,     // client -> server: explicit disconnect notice
+    ReturnToMenu    // server -> client: ask client to return to menu (e.g., too few players)
 };
 
 struct Header {

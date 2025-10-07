@@ -202,6 +202,7 @@ void Screens::ensureNetSetup() {
     asio::ip::udp::resolver resolver(*g.io);
     g.server = *resolver.resolve(asio::ip::udp::v4(), _serverAddr, _serverPort).begin();
     g.sock->non_blocking(true);
+    _serverReturnToMenu = false;
     // Re-send Hello on gameplay entry so server registers this endpoint for state
     rtype::net::Header hdr{};
     hdr.version = rtype::net::ProtocolVersion;
@@ -213,8 +214,22 @@ void Screens::ensureNetSetup() {
     g.sock->send_to(asio::buffer(out), g.server);
 }
 
+void Screens::sendDisconnect() {
+    if (!g.sock) return;
+    rtype::net::Header hdr{};
+    hdr.version = rtype::net::ProtocolVersion;
+    hdr.type = rtype::net::MsgType::Disconnect;
+    hdr.size = 0;
+    std::array<char, sizeof(rtype::net::Header)> buf{};
+    std::memcpy(buf.data(), &hdr, sizeof(hdr));
+    asio::error_code ec;
+    g.sock->send_to(asio::buffer(buf), g.server, 0, ec);
+}
+
 void Screens::teardownNet() {
     if (g.sock && g.sock->is_open()) {
+        // Best-effort notify server that we intentionally disconnect
+        sendDisconnect();
         asio::error_code ec; g.sock->close(ec);
     }
     g.sock.reset();
@@ -243,6 +258,10 @@ void Screens::pumpNetworkOnce() {
     if (ec || n < sizeof(rtype::net::Header)) return;
     auto* h = reinterpret_cast<const rtype::net::Header*>(in.data());
     if (h->version != rtype::net::ProtocolVersion) return;
+    if (h->type == rtype::net::MsgType::ReturnToMenu) {
+        _serverReturnToMenu = true;
+        return;
+    }
     if (h->type != rtype::net::MsgType::State) return;
     const char* p = in.data() + sizeof(rtype::net::Header);
     if (n < sizeof(rtype::net::Header) + sizeof(rtype::net::StateHeader)) return;
@@ -273,6 +292,15 @@ void Screens::drawWaiting(ScreenState& screen) {
 
     // Pump one network packet if available to update entities
     pumpNetworkOnce();
+
+    if (_serverReturnToMenu) {
+        teardownNet();
+        _connected = false;
+        _entities.clear();
+        _statusMessage = "Not enough players. Returning to menu.";
+        screen = ScreenState::Menu;
+        return;
+    }
 
     // Count players in the latest world snapshot
     int playerCount = 0;
@@ -317,6 +345,17 @@ void Screens::drawGameplay(ScreenState& screen) {
     }
     ensureNetSetup();
 
+    pumpNetworkOnce();
+
+    if (_serverReturnToMenu) {
+        teardownNet();
+        _connected = false;
+        _entities.clear();
+        _statusMessage = "Not enough players. Returning to menu.";
+        screen = ScreenState::Menu;
+        return;
+    }
+
     // Input bits
     std::uint8_t bits = 0;
     if (IsKeyDown(KEY_LEFT))  bits |= rtype::net::InputLeft;
@@ -331,7 +370,6 @@ void Screens::drawGameplay(ScreenState& screen) {
         _lastSend = now;
     }
 
-    pumpNetworkOnce();
 
     // --- HUD ---
     int w = GetScreenWidth();
