@@ -2,6 +2,7 @@
 #include <iostream>
 #include <cstring>
 #include <cmath>
+#include <chrono>
 #include "rt/game/Components.hpp"
 #include "rt/game/Systems.hpp"
 
@@ -14,9 +15,7 @@ static std::string makeKey(const asio::ip::udp::endpoint& ep) {
 UdpServer::UdpServer(unsigned short port)
     : socket_(io_, asio::ip::udp::endpoint(asio::ip::udp::v4(), port)), rng_(std::random_device{}()) {}
 
-UdpServer::~UdpServer() {
-    stop();
-}
+UdpServer::~UdpServer() { stop(); }
 
 void UdpServer::start() {
     std::cout << "[server] Listening UDP on " << socket_.local_endpoint().port() << "\n";
@@ -40,9 +39,8 @@ void UdpServer::doReceive() {
     socket_.async_receive_from(
         asio::buffer(buffer_), remote_,
         [this](std::error_code ec, std::size_t n) {
-            if (!ec && n >= sizeof(rtype::net::Header)) {
+            if (!ec && n >= sizeof(rtype::net::Header))
                 handlePacket(remote_, buffer_.data(), n);
-            }
             if (!ec) doReceive();
         }
     );
@@ -54,12 +52,12 @@ void UdpServer::handlePacket(const asio::ip::udp::endpoint& from, const char* da
     if (header->version != rtype::net::ProtocolVersion) return;
     const char* payload = data + sizeof(rtype::net::Header);
     std::size_t payloadSize = size - sizeof(rtype::net::Header);
-
     auto key = makeKey(from);
+    lastSeen_[key] = std::chrono::steady_clock::now();
+
     if (header->type == rtype::net::MsgType::Hello) {
         keyToEndpoint_[key] = from;
         if (endpointToPlayerId_.find(key) == endpointToPlayerId_.end()) {
-            // Create a player entity in ECS
             auto e = reg_.create();
             reg_.emplace<rt::game::Transform>(e, {50.f, 100.f + static_cast<float>(endpointToPlayerId_.size()) * 40.f});
             reg_.emplace<rt::game::Velocity>(e, {0.f, 0.f});
@@ -71,7 +69,6 @@ void UdpServer::handlePacket(const asio::ip::udp::endpoint& from, const char* da
             endpointToPlayerId_[key] = e;
             playerInputBits_[e] = 0;
         }
-        // Reply HelloAck
         rtype::net::Header ack{0, rtype::net::MsgType::HelloAck, rtype::net::ProtocolVersion};
         doSend(from, &ack, sizeof(ack));
         return;
@@ -83,7 +80,8 @@ void UdpServer::handlePacket(const asio::ip::udp::endpoint& from, const char* da
             auto it = endpointToPlayerId_.find(key);
             if (it != endpointToPlayerId_.end()) {
                 playerInputBits_[it->second] = in->bits;
-                if (auto* pi = reg_.get<rt::game::PlayerInput>(it->second)) pi->bits = in->bits;
+                if (auto* pi = reg_.get<rt::game::PlayerInput>(it->second))
+                    pi->bits = in->bits;
             }
         }
         return;
@@ -96,39 +94,65 @@ void UdpServer::gameLoop() {
     const double dt = 1.0 / tickRate;
     auto next = clock::now();
     float elapsed = 0.f;
-    // Install systems once
     reg_.addSystem(std::make_unique<rt::game::InputSystem>());
     reg_.addSystem(std::make_unique<rt::game::ShootingSystem>());
     reg_.addSystem(std::make_unique<rt::game::FormationSystem>(&elapsed));
     reg_.addSystem(std::make_unique<rt::game::MovementSystem>());
     reg_.addSystem(std::make_unique<rt::game::EnemyShootingSystem>(rng_));
     reg_.addSystem(std::make_unique<rt::game::DespawnOffscreenSystem>(-50.f));
-    // Despawn bullets that leave screen (x: -50..1000, y: -50..600)
     reg_.addSystem(std::make_unique<rt::game::DespawnOutOfBoundsSystem>(-50.f, 1000.f, -50.f, 600.f));
     reg_.addSystem(std::make_unique<rt::game::CollisionSystem>());
     reg_.addSystem(std::make_unique<rt::game::FormationSpawnSystem>(rng_, &elapsed));
 
     while (running_) {
         next += std::chrono::duration_cast<clock::duration>(std::chrono::duration<double>(dt));
-    elapsed += static_cast<float>(dt);
-
-        // Tick ECS
+        elapsed += static_cast<float>(dt);
         reg_.update(static_cast<float>(dt));
-
+        checkTimeouts();
         broadcastState();
-
         std::this_thread::sleep_until(next);
     }
 }
 
+void UdpServer::checkTimeouts() {
+    using namespace std::chrono;
+    const auto now = steady_clock::now();
+    const auto timeout = seconds(10);
+    std::vector<std::string> toRemove;
+    for (auto& [key, last] : lastSeen_) {
+        if (now - last > timeout)
+            toRemove.push_back(key);
+    }
+    for (auto& key : toRemove)
+        removeClient(key);
+}
+
+void UdpServer::removeClient(const std::string& key) {
+    auto it = endpointToPlayerId_.find(key);
+    if (it == endpointToPlayerId_.end()) return;
+    auto id = it->second;
+    endpointToPlayerId_.erase(it);
+    keyToEndpoint_.erase(key);
+    lastSeen_.erase(key);
+    playerInputBits_.erase(id);
+    try { reg_.destroy(id); } catch (...) {}
+    rtype::net::Header hdr{};
+    hdr.size = sizeof(std::uint32_t);
+    hdr.type = rtype::net::MsgType::Despawn;
+    hdr.version = rtype::net::ProtocolVersion;
+    std::vector<char> out(sizeof(hdr) + sizeof(std::uint32_t));
+    std::memcpy(out.data(), &hdr, sizeof(hdr));
+    std::memcpy(out.data() + sizeof(hdr), &id, sizeof(id));
+    for (auto& [_, ep] : keyToEndpoint_)
+        doSend(ep, out.data(), out.size());
+    std::cout << "[server] Removed disconnected client: " << key << "\n";
+}
 
 void UdpServer::broadcastState() {
-    // Build State packet
     rtype::net::Header hdr{};
     hdr.version = rtype::net::ProtocolVersion;
     hdr.type = rtype::net::MsgType::State;
     rtype::net::StateHeader sh{};
-    // collect ECS entities with NetType for serialization
     std::vector<rtype::net::PackedEntity> net;
     net.reserve(512);
     auto& types = reg_.storage<rt::game::NetType>().data();
@@ -147,25 +171,20 @@ void UdpServer::broadcastState() {
         if (net.size() >= 512) break;
     }
     sh.count = static_cast<std::uint16_t>(net.size());
-
     std::size_t payloadSize = sizeof(rtype::net::StateHeader) + net.size() * sizeof(rtype::net::PackedEntity);
     hdr.size = static_cast<std::uint16_t>(payloadSize);
-
     std::vector<char> out(sizeof(rtype::net::Header) + payloadSize);
     std::memcpy(out.data(), &hdr, sizeof(hdr));
     std::memcpy(out.data() + sizeof(hdr), &sh, sizeof(sh));
     auto* arr = reinterpret_cast<rtype::net::PackedEntity*>(out.data() + sizeof(hdr) + sizeof(sh));
     for (std::uint16_t i = 0; i < sh.count; ++i) arr[i] = net[i];
-
-    for (const auto& [key, ep] : keyToEndpoint_) {
+    for (const auto& [key, ep] : keyToEndpoint_)
         doSend(ep, out.data(), out.size());
-    }
 }
 
 void UdpServer::doSend(const asio::ip::udp::endpoint& to, const void* data, std::size_t size) {
-    auto buf = std::make_shared<std::vector<char>>(static_cast<const char*>(data), static_cast<const char*>(data)+size);
-    socket_.async_send_to(asio::buffer(*buf), to,
-        [buf](std::error_code, std::size_t){});
+    auto buf = std::make_shared<std::vector<char>>(static_cast<const char*>(data), static_cast<const char*>(data) + size);
+    socket_.async_send_to(asio::buffer(*buf), to, [buf](std::error_code, std::size_t) {});
 }
 
 }
