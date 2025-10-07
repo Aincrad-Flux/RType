@@ -2,6 +2,7 @@
 #include "../../include/client/ui/Widgets.hpp"
 #include <raylib.h>
 #include <asio.hpp>
+#include <memory>
 #include <iostream>
 #include <vector>
 #include <cstring>
@@ -9,6 +10,14 @@
 
 namespace client {
 namespace ui {
+
+namespace {
+    struct UdpClientGlobals {
+        std::unique_ptr<asio::io_context> io;
+        std::unique_ptr<asio::ip::udp::socket> sock;
+        asio::ip::udp::endpoint server;
+    } g;
+}
 
 static int baseFontFromHeight(int h) {
     int baseFont = (int)(h * 0.045f);
@@ -119,42 +128,28 @@ void Screens::drawMultiplayer(ScreenState& screen, MultiplayerForm& form) {
         if (canConnect) {
             logMessage("Connecting to " + form.serverAddress + ":" + form.serverPort + " as " + form.username, "INFO");
             try {
-                asio::io_context io;
-                asio::ip::udp::socket sock(io);
-                sock.open(asio::ip::udp::v4());
-                asio::ip::udp::resolver resolver(io);
-                asio::ip::udp::endpoint endpoint = *resolver.resolve(asio::ip::udp::v4(), form.serverAddress, form.serverPort).begin();
+                // Store connection params
+                _username = form.username;
+                _serverAddr = form.serverAddress;
+                _serverPort = form.serverPort;
 
-                // Build Hello packet with username payload
-                rtype::net::Header hdr{};
-                hdr.version = rtype::net::ProtocolVersion;
-                hdr.type = rtype::net::MsgType::Hello;
-                hdr.size = static_cast<std::uint16_t>(form.username.size());
-                std::vector<char> out(sizeof(rtype::net::Header) + form.username.size());
-                std::memcpy(out.data(), &hdr, sizeof(hdr));
-                std::memcpy(out.data() + sizeof(hdr), form.username.data(), form.username.size());
+                // Ensure a persistent UDP socket is created and send Hello once
+                teardownNet();
+                ensureNetSetup();
 
-                logMessage("Sending Hello packet (" + std::to_string(out.size()) + " bytes) to server.", "INFO");
-                sock.send_to(asio::buffer(out), endpoint);
-
-                // Set a short timeout
-                sock.non_blocking(true);
-                asio::ip::udp::endpoint from;
-                std::array<char, 1024> in{};
+                // Wait briefly for HelloAck on the same socket
                 double start = GetTime();
                 bool ok = false;
                 while (GetTime() - start < 1.0) {
+                    asio::ip::udp::endpoint from;
+                    std::array<char, 1024> in{};
                     asio::error_code ec;
-                    std::size_t n = sock.receive_from(asio::buffer(in), from, 0, ec);
+                    std::size_t n = g.sock->receive_from(asio::buffer(in), from, 0, ec);
                     if (!ec && n >= sizeof(rtype::net::Header)) {
-                        logMessage("Received " + std::to_string(n) + " bytes from server.", "INFO");
                         auto* rh = reinterpret_cast<rtype::net::Header*>(in.data());
                         if (rh->version == rtype::net::ProtocolVersion && rh->type == rtype::net::MsgType::HelloAck) {
-                            logMessage("Received HelloAck from server.", "INFO");
                             ok = true;
                             break;
-                        } else {
-                            logMessage("Received packet but not HelloAck (type=" + std::to_string(static_cast<int>(rh->type)) + ")", "WARN");
                         }
                     } else if (ec && ec != asio::error::would_block) {
                         logMessage(std::string("Receive error: ") + ec.message(), "ERROR");
@@ -163,16 +158,15 @@ void Screens::drawMultiplayer(ScreenState& screen, MultiplayerForm& form) {
                 if (ok) {
                     _statusMessage = std::string("Player Connected.");
                     _connected = true;
-                    _username = form.username;
-                    _serverAddr = form.serverAddress;
-                    _serverPort = form.serverPort;
-                    screen = ScreenState::Gameplay;
+                    screen = ScreenState::Waiting;
                 } else {
                     _statusMessage = std::string("Connection failed.");
+                    teardownNet();
                 }
             } catch (const std::exception& e) {
                 logMessage(std::string("Exception: ") + e.what(), "ERROR");
                 _statusMessage = std::string("Error: ") + e.what();
+                teardownNet();
             }
         }
     }
@@ -199,13 +193,6 @@ void Screens::drawLeaderboard() {
 }
 
 // --- Minimal gameplay networking and rendering ---
-namespace {
-    struct UdpClientGlobals {
-        std::unique_ptr<asio::io_context> io;
-        std::unique_ptr<asio::ip::udp::socket> sock;
-        asio::ip::udp::endpoint server;
-    } g;
-}
 
 void Screens::ensureNetSetup() {
     if (g.io) return;
@@ -276,6 +263,53 @@ void Screens::pumpNetworkOnce() {
     }
 }
 
+void Screens::drawWaiting(ScreenState& screen) {
+    int w = GetScreenWidth();
+    int h = GetScreenHeight();
+    int baseFont = baseFontFromHeight(h);
+
+    // Ensure socket is ready (in case we came here directly)
+    ensureNetSetup();
+
+    // Pump one network packet if available to update entities
+    pumpNetworkOnce();
+
+    // Count players in the latest world snapshot
+    int playerCount = 0;
+    for (const auto& e : _entities) {
+        if (e.type == 1)
+            ++playerCount;
+    }
+
+    // UI
+    titleCentered("Waiting for players...", (int)(h * 0.25f), (int)(h * 0.08f), RAYWHITE);
+    std::string sub = "Players connected: " + std::to_string(playerCount) + "/2";
+    titleCentered(sub.c_str(), (int)(h * 0.40f), baseFont, RAYWHITE);
+
+    // Simple animated dots
+    int dots = ((int)(GetTime() * 2)) % 4;
+    std::string hint = "The game will start automatically" + std::string(dots, '.');
+    titleCentered(hint.c_str(), (int)(h * 0.50f), baseFont, LIGHTGRAY);
+
+    // Cancel button
+    int btnWidth = (int)(w * 0.18f);
+    int btnHeight = (int)(h * 0.08f);
+    int x = (w - btnWidth) / 2;
+    int y = (int)(h * 0.70f);
+    if (button({(float)x, (float)y, (float)btnWidth, (float)btnHeight}, "Cancel", baseFont, BLACK, LIGHTGRAY, GRAY)) {
+        teardownNet();
+        _connected = false;
+        _entities.clear();
+        screen = ScreenState::Menu;
+        return;
+    }
+
+    // Transition to gameplay when at least 2 players are present
+    if (playerCount >= 2) {
+        screen = ScreenState::Gameplay;
+    }
+}
+
 void Screens::drawGameplay(ScreenState& screen) {
     if (!_connected) {
         titleCentered("Not connected. Press ESC.", GetScreenHeight()*0.5f, 24, RAYWHITE);
@@ -299,30 +333,67 @@ void Screens::drawGameplay(ScreenState& screen) {
 
     pumpNetworkOnce();
 
+    // --- HUD ---
+    int w = GetScreenWidth();
+    int h = GetScreenHeight();
+    int hudFont = (int)(h * 0.045f);
+    if (hudFont < 16) hudFont = 16;
+    int margin = 16;
+
+    // Nom du joueur (en haut à gauche)
+    DrawText(_username.c_str(), margin, margin, hudFont, RAYWHITE);
+
+    // Niveau (Lv) à droite du nom
+    int nameWidth = MeasureText(_username.c_str(), hudFont);
+    int lv = 1; // TODO: remplacer par la vraie valeur du niveau si disponible
+    std::string lvStr = "Lv " + std::to_string(lv);
+    int lvX = margin + nameWidth + 16;
+    DrawText(lvStr.c_str(), lvX, margin, hudFont, (Color){200, 200, 80, 255});
+
+    // Barre de HP sur la même ligne, à droite du lvl
+    float hp = 1.0f; // TODO: remplacer par la vraie valeur de HP (0.0 à 1.0)
+    int lvWidth = MeasureText(lvStr.c_str(), hudFont);
+    int barX = lvX + lvWidth + 32;
+    int barY = margin + hudFont/4;
+    int barH = hudFont/2;
+    int barW = w - barX - margin;
+    if (barW > 0) {
+        DrawRectangle(barX, barY, barW, barH, DARKGRAY);
+        DrawRectangle(barX, barY, (int)(barW * hp), barH, (Color){120, 220, 120, 255});
+        DrawRectangleLines(barX, barY, barW, barH, RAYWHITE);
+    }
+
+    // Calculer la zone HUD pour empêcher le joueur de passer dessous
+    int hudBottom = margin + hudFont;
+
     if (_entities.empty()) {
         titleCentered("Connecting to game...", (int)(GetScreenHeight()*0.5f), 24, RAYWHITE);
     }
 
     // Render entities as simple shapes
-    for (const auto& e : _entities) {
+    for (auto& e : _entities) {
         Color c = {(unsigned char)((e.rgba>>24)&0xFF),(unsigned char)((e.rgba>>16)&0xFF),(unsigned char)((e.rgba>>8)&0xFF),(unsigned char)(e.rgba&0xFF)};
-        switch (e.type) {
-            case 1: // Player
-                DrawRectangle((int)e.x, (int)e.y, 20, 12, c);
-                break;
-            case 2: // Enemy
-                DrawCircle((int)e.x, (int)e.y, 10, c);
-                break;
-            case 3: // Bullet
-                DrawRectangle((int)e.x, (int)e.y, 6, 3, c);
-                break;
-            default:
-                break;
+        if (e.type == 1) { // Player (on applique les contraintes)
+            // Taille du vaisseau
+            int shipW = 20, shipH = 12;
+            // Empêcher de passer sous le HUD
+            if (e.y < hudBottom) e.y = (float)hudBottom;
+            // Empêcher de sortir de l'écran
+            if (e.x < 0) e.x = 0;
+            if (e.x + shipW > w) e.x = (float)(w - shipW);
+            if (e.y + shipH > h) e.y = (float)(h - shipH);
+            DrawRectangle((int)e.x, (int)e.y, shipW, shipH, c);
+        } else if (e.type == 2) { // Enemy
+            // Enemies: clamp to playable vertical area so they don't overlap HUD or go below screen
+            int ew = 18, eh = 12;
+            if (e.y < hudBottom) e.y = (float)hudBottom;
+            if (e.y + eh > h) e.y = (float)(h - eh);
+            DrawRectangle((int)e.x, (int)e.y, ew, eh, c);
+        } else if (e.type == 3) { // Bullet
+            DrawRectangle((int)e.x, (int)e.y, 6, 3, c);
         }
     }
 }
 
 } // namespace ui
 } // namespace client
-
-

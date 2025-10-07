@@ -1,0 +1,22 @@
+pipeline {
+    agent any
+
+    parameters {
+        string(name: 'SOURCE_REPO', defaultValue: 'https://github.com/Aincrad-Flux/RType.git', description: 'URL du repo source à cloner')
+    }
+
+    stages {
+        stage('Clone Repository') {
+            steps {
+                git branch: 'main',
+                    url: "${params.SOURCE_REPO}",
+                    credentialsId: 'github-https-token'
+            }
+        }
+        stage('See Files') {
+            steps {
+                sh 'ls -la'
+            }
+        }
+    }
+}

@@ -11,6 +11,7 @@ enum class ScreenState {
     Menu,
     Singleplayer,
     Multiplayer,
+    Waiting,
     Gameplay,
     Options,
     Leaderboard,
@@ -32,6 +33,7 @@ public:
     void drawMenu(ScreenState& screen);
     void drawSingleplayer(ScreenState& screen, SingleplayerForm& form);
     void drawMultiplayer(ScreenState& screen, MultiplayerForm& form);
+    void drawWaiting(ScreenState& screen);
     void drawGameplay(ScreenState& screen);
     void drawOptions();
     void drawLeaderboard();
@@ -56,5 +58,3 @@ private:
 
 } // namespace ui
 } // namespace client
-
-

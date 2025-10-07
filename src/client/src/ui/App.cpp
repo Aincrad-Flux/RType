@@ -42,6 +42,7 @@ void App::run() {
             case ScreenState::Menu: _screens.drawMenu(_screen); break;
             case ScreenState::Singleplayer: _screens.drawSingleplayer(_screen, _singleForm); break;
             case ScreenState::Multiplayer: _screens.drawMultiplayer(_screen, _form); break;
+            case ScreenState::Waiting: _screens.drawWaiting(_screen); break;
             case ScreenState::Gameplay:
                 if (!_resizedForGameplay) {
                     SetWindowSize(screenWidth * 1, screenHeight * 1);
@@ -62,5 +63,3 @@ void App::run() {
 
 } // namespace ui
 } // namespace client
-
-

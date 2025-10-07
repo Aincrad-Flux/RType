@@ -9,3 +9,5 @@ List and describe all API endpoints, request/response formats, and authenticatio
 
 ## Data Formats
 Describe data structures and serialization formats.
+
+See also: [Protocol réseau (binaire UDP)](./protocol.md) pour le détail des paquets échangés entre client et serveur.
