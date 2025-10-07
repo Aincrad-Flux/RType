@@ -1,0 +1,94 @@
+pipeline {
+    agent {
+        docker {
+            image 'debian:bookworm'
+            args '-u root:root --privileged'
+        }
+    }
+
+    parameters {
+        string(name: 'BRANCH_NAME', defaultValue: 'main', description: 'Branch label used for destination path in storage')
+        string(name: 'SOURCE_JOB', defaultValue: 'R-Type/Build All Binaires', description: 'Full name of the Jenkins job to copy artifacts from (including folder if any)')
+        string(name: 'SOURCE_BUILD_NUMBER', defaultValue: '', description: 'Specific build number to copy from (leave empty to use last successful)')
+    }
+
+    stages {
+        stage('Fetch Binaries from Upstream') {
+            steps {
+                script {
+                    if (params.SOURCE_BUILD_NUMBER?.trim()) {
+                        copyArtifacts(projectName: params.SOURCE_JOB,
+                                      selector: specific("${params.SOURCE_BUILD_NUMBER}"),
+                                      filter: 'build/bin/r-type_*',
+                                      fingerprintArtifacts: true,
+                                      flatten: false)
+                    } else {
+                        copyArtifacts(projectName: params.SOURCE_JOB,
+                                      selector: lastSuccessful(),
+                                      filter: 'build/bin/r-type_*',
+                                      fingerprintArtifacts: true,
+                                      flatten: false)
+                    }
+                }
+            }
+        }
+
+        stage('Check Binaries') {
+            steps {
+                sh '''
+                    echo "Verifying binaries existence..."
+                    if [ ! -f "build/bin/r-type_client" ] || [ ! -f "build/bin/r-type_server" ]; then
+                        echo "❌ One or both binaries are missing!"
+                        exit 1
+                    fi
+
+                    if [ ! -x "build/bin/r-type_client" ] || [ ! -x "build/bin/r-type_server" ]; then
+                        echo "⚠️ One or both binaries are not executable, fixing permissions..."
+                        chmod +x build/bin/r-type_client build/bin/r-type_server
+                    fi
+
+                    echo "✅ Both binaries are present and ready."
+                    ls -lh build/bin/r-type_client build/bin/r-type_server
+                '''
+            }
+        }
+
+        stage('Archive Binaries') {
+            steps {
+                archiveArtifacts artifacts: 'build/bin/r-type_client, build/bin/r-type_server',
+                                 fingerprint: true,
+                                 allowEmptyArchive: false
+            }
+        }
+
+        stage('Send Binaries to MinIO') {
+            steps {
+                withAWS(
+                    credentials: 'minio-credentials',
+                    endpointUrl: 'http://192.168.1.184:9000',
+                    region: 'us-east-1',
+                ) {
+                    s3Upload(
+                        bucket: 'artifacts',
+                        path: "r-type/${params.BRANCH_NAME}/",
+                        includePathPattern: 'build/bin/r-type_*',
+                        workingDir: '.'
+                    )
+                }
+            }
+        }
+
+    }
+
+    post {
+        success {
+            echo '✅ Pipeline completed successfully!'
+        }
+        failure {
+            echo '❌ Pipeline failed!'
+        }
+        always {
+            cleanWs()
+        }
+    }
+}
