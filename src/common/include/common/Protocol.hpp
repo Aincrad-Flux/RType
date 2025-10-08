@@ -12,7 +12,10 @@ enum class MsgType : std::uint8_t {
     Spawn,
     Despawn,
     Ping,
-    Pong
+    Pong,
+    Roster,     // list of players with names and lives (sent on join/leave)
+    LivesUpdate, // notify when a player's lives change
+    ScoreUpdate  // notify when a player's score changes (authoritative)
 };
 
 struct Header {
@@ -61,6 +64,37 @@ struct PackedEntity {
 // The State payload is: StateHeader + N * PackedEntity
 struct StateHeader {
     std::uint16_t count; // number of entities following
+};
+#pragma pack(pop)
+
+// --- Lightweight roster message (player list) ---
+// Payload layout: RosterHeader + count * PlayerEntry
+#pragma pack(push, 1)
+struct RosterHeader {
+    std::uint8_t count; // number of PlayerEntry records following
+};
+
+// Fixed-size per player entry to avoid dynamic parsing; name is UTF-8 truncated
+struct PlayerEntry {
+    std::uint32_t id;     // server-side entity/player id
+    std::uint8_t lives;   // remaining lives
+    char name[16];        // zero-padded/truncated username (max 15 chars + NUL)
+};
+#pragma pack(pop)
+
+// One-off update for a single player's lives change
+#pragma pack(push, 1)
+struct LivesUpdatePayload {
+    std::uint32_t id;
+    std::uint8_t lives; // new lives value
+};
+#pragma pack(pop)
+
+// One-off update for a single player's score change
+#pragma pack(push, 1)
+struct ScoreUpdatePayload {
+    std::uint32_t id;
+    std::int32_t score; // new total score
 };
 #pragma pack(pop)
 
