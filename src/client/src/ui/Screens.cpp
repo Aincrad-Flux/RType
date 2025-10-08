@@ -54,19 +54,28 @@ void Screens::drawMenu(ScreenState& screen) {
     int gap = (int)(h * 0.02f);
     int startY = (int)(h * 0.30f);
     int x = (w - btnWidth) / 2;
-    if (button({(float)x, (float)startY, (float)btnWidth, (float)btnHeight}, "Singleplayer", baseFont, BLACK, LIGHTGRAY, GRAY)) {
-        screen = ScreenState::Singleplayer;
-    }
+
+    // Disabled button styling (greyed out, no hover effect)
+    Color disText = DARKGRAY;
+    Color disBg = (Color){70, 70, 70, 255};
+    Color disHover = disBg;
+
+    // Singleplayer (disabled)
+    button({(float)x, (float)startY, (float)btnWidth, (float)btnHeight}, "Singleplayer", baseFont, disText, disBg, disHover);
+
+    // Multiplayer (enabled)
     if (button({(float)x, (float)(startY + (btnHeight + gap) * 1), (float)btnWidth, (float)btnHeight}, "Multiplayer", baseFont, BLACK, LIGHTGRAY, GRAY)) {
         screen = ScreenState::Multiplayer;
         _focusedField = 0;
     }
-    if (button({(float)x, (float)(startY + (btnHeight + gap) * 2), (float)btnWidth, (float)btnHeight}, "Options", baseFont, BLACK, LIGHTGRAY, GRAY)) {
-        screen = ScreenState::Options;
-    }
-    if (button({(float)x, (float)(startY + (btnHeight + gap) * 3), (float)btnWidth, (float)btnHeight}, "Leaderboard", baseFont, BLACK, LIGHTGRAY, GRAY)) {
-        screen = ScreenState::Leaderboard;
-    }
+
+    // Options (disabled)
+    button({(float)x, (float)(startY + (btnHeight + gap) * 2), (float)btnWidth, (float)btnHeight}, "Options", baseFont, disText, disBg, disHover);
+
+    // Leaderboard (disabled)
+    button({(float)x, (float)(startY + (btnHeight + gap) * 3), (float)btnWidth, (float)btnHeight}, "Leaderboard", baseFont, disText, disBg, disHover);
+
+    // Quit (enabled)
     if (button({(float)x, (float)(startY + (btnHeight + gap) * 4), (float)btnWidth, (float)btnHeight}, "Quit", baseFont, BLACK, (Color){200, 80, 80, 255}, (Color){230, 120, 120, 255})) {
         screen = ScreenState::Exiting;
     }
