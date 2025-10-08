@@ -294,6 +294,7 @@ void Screens::pumpNetworkOnce() {
     if (ec || n < sizeof(rtype::net::Header)) return;
     auto* h = reinterpret_cast<const rtype::net::Header*>(in.data());
     if (h->version != rtype::net::ProtocolVersion) return;
+
     if (h->type == rtype::net::MsgType::State) {
         const char* p = in.data() + sizeof(rtype::net::Header);
         if (n < sizeof(rtype::net::Header) + sizeof(rtype::net::StateHeader)) return;
@@ -321,7 +322,6 @@ void Screens::pumpNetworkOnce() {
         std::size_t count = rh->count;
         if (n < sizeof(rtype::net::Header) + sizeof(rtype::net::RosterHeader) + count * sizeof(rtype::net::PlayerEntry)) return;
         _otherPlayers.clear();
-        // Determine truncated username as stored by server (15 chars max)
         std::string unameTrunc = _username.substr(0, 15);
         for (std::size_t i = 0; i < count; ++i) {
             auto* pe = reinterpret_cast<const rtype::net::PlayerEntry*>(p + i * sizeof(rtype::net::PlayerEntry));
@@ -330,11 +330,10 @@ void Screens::pumpNetworkOnce() {
             if (name == unameTrunc) {
                 _playerLives = lives;
                 _selfId = pe->id;
-                continue; // don't include self in top bar list
+                continue;
             }
             _otherPlayers.push_back({pe->id, name, lives});
         }
-        // Keep at most 3 teammates in top bar
         if (_otherPlayers.size() > 3)
             _otherPlayers.resize(3);
         return;
@@ -361,29 +360,11 @@ void Screens::pumpNetworkOnce() {
             _score = su->score;
         }
         return;
-    } else {
-        return;
-    if (h->type == rtype::net::MsgType::ReturnToMenu) {
+    } else if (h->type == rtype::net::MsgType::ReturnToMenu) {
         _serverReturnToMenu = true;
         return;
-    }
-    if (h->type != rtype::net::MsgType::State) return;
-    const char* p = in.data() + sizeof(rtype::net::Header);
-    if (n < sizeof(rtype::net::Header) + sizeof(rtype::net::StateHeader)) return;
-    auto* sh = reinterpret_cast<const rtype::net::StateHeader*>(p);
-    p += sizeof(rtype::net::StateHeader);
-    std::size_t count = sh->count;
-    if (n < sizeof(rtype::net::Header) + sizeof(rtype::net::StateHeader) + count * sizeof(rtype::net::PackedEntity)) return;
-    _entities.clear();
-    _entities.reserve(count);
-    auto* arr = reinterpret_cast<const rtype::net::PackedEntity*>(p);
-    for (std::size_t i = 0; i < count; ++i) {
-        PackedEntity e{};
-        e.id = arr[i].id;
-        e.type = static_cast<unsigned char>(arr[i].type);
-        e.x = arr[i].x; e.y = arr[i].y; e.vx = arr[i].vx; e.vy = arr[i].vy;
-        e.rgba = arr[i].rgba;
-        _entities.push_back(e);
+    } else {
+        return;
     }
 }
 
