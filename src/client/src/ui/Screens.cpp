@@ -22,6 +22,14 @@ namespace {
     } g;
 }
 
+void Screens::leaveSession() {
+    // Gracefully leave any active multiplayer session
+    teardownNet();
+    _connected = false;
+    _entities.clear();
+    _serverReturnToMenu = false;
+}
+
 static int baseFontFromHeight(int h) {
     int baseFont = (int)(h * 0.045f);
     if (baseFont < 16) baseFont = 16;
@@ -202,6 +210,23 @@ void Screens::drawLeaderboard() {
     titleCentered("Coming soon... Press ESC to go back.", (int)(h * 0.50f), baseFont, RAYWHITE);
 }
 
+void Screens::drawNotEnoughPlayers(ScreenState& screen) {
+    int w = GetScreenWidth();
+    int h = GetScreenHeight();
+    int baseFont = baseFontFromHeight(h);
+
+    titleCentered("Not enough players connected", (int)(h * 0.30f), (int)(h * 0.09f), RAYWHITE);
+    titleCentered("Another player disconnected. You have been returned from the game.", (int)(h * 0.42f), baseFont, LIGHTGRAY);
+
+    int btnWidth = (int)(w * 0.24f);
+    int btnHeight = (int)(h * 0.09f);
+    int x = (w - btnWidth) / 2;
+    int y = (int)(h * 0.60f);
+    if (button({(float)x, (float)y, (float)btnWidth, (float)btnHeight}, "Back to Menu", baseFont, BLACK, LIGHTGRAY, GRAY)) {
+        screen = ScreenState::Menu;
+    }
+}
+
 // --- Minimal gameplay networking and rendering ---
 
 void Screens::ensureNetSetup() {
@@ -212,6 +237,7 @@ void Screens::ensureNetSetup() {
     asio::ip::udp::resolver resolver(*g.io);
     g.server = *resolver.resolve(asio::ip::udp::v4(), _serverAddr, _serverPort).begin();
     g.sock->non_blocking(true);
+    _serverReturnToMenu = false;
     // Re-send Hello on gameplay entry so server registers this endpoint for state
     rtype::net::Header hdr{};
     hdr.version = rtype::net::ProtocolVersion;
@@ -223,8 +249,22 @@ void Screens::ensureNetSetup() {
     g.sock->send_to(asio::buffer(out), g.server);
 }
 
+void Screens::sendDisconnect() {
+    if (!g.sock) return;
+    rtype::net::Header hdr{};
+    hdr.version = rtype::net::ProtocolVersion;
+    hdr.type = rtype::net::MsgType::Disconnect;
+    hdr.size = 0;
+    std::array<char, sizeof(rtype::net::Header)> buf{};
+    std::memcpy(buf.data(), &hdr, sizeof(hdr));
+    asio::error_code ec;
+    g.sock->send_to(asio::buffer(buf), g.server, 0, ec);
+}
+
 void Screens::teardownNet() {
     if (g.sock && g.sock->is_open()) {
+        // Best-effort notify server that we intentionally disconnect
+        sendDisconnect();
         asio::error_code ec; g.sock->close(ec);
     }
     g.sock.reset();
@@ -323,6 +363,27 @@ void Screens::pumpNetworkOnce() {
         return;
     } else {
         return;
+    if (h->type == rtype::net::MsgType::ReturnToMenu) {
+        _serverReturnToMenu = true;
+        return;
+    }
+    if (h->type != rtype::net::MsgType::State) return;
+    const char* p = in.data() + sizeof(rtype::net::Header);
+    if (n < sizeof(rtype::net::Header) + sizeof(rtype::net::StateHeader)) return;
+    auto* sh = reinterpret_cast<const rtype::net::StateHeader*>(p);
+    p += sizeof(rtype::net::StateHeader);
+    std::size_t count = sh->count;
+    if (n < sizeof(rtype::net::Header) + sizeof(rtype::net::StateHeader) + count * sizeof(rtype::net::PackedEntity)) return;
+    _entities.clear();
+    _entities.reserve(count);
+    auto* arr = reinterpret_cast<const rtype::net::PackedEntity*>(p);
+    for (std::size_t i = 0; i < count; ++i) {
+        PackedEntity e{};
+        e.id = arr[i].id;
+        e.type = static_cast<unsigned char>(arr[i].type);
+        e.x = arr[i].x; e.y = arr[i].y; e.vx = arr[i].vx; e.vy = arr[i].vy;
+        e.rgba = arr[i].rgba;
+        _entities.push_back(e);
     }
 }
 
@@ -336,6 +397,13 @@ void Screens::drawWaiting(ScreenState& screen) {
 
     // Pump one network packet if available to update entities
     pumpNetworkOnce();
+
+    if (_serverReturnToMenu) {
+        // Server asked us to return: cleanly leave and show info screen
+        leaveSession();
+        screen = ScreenState::NotEnoughPlayers;
+        return;
+    }
 
     // Count players in the latest world snapshot
     int playerCount = 0;
@@ -380,6 +448,15 @@ void Screens::drawGameplay(ScreenState& screen) {
     }
     ensureNetSetup();
 
+    pumpNetworkOnce();
+
+    if (_serverReturnToMenu) {
+        // Server asked us to return: cleanly leave and show info screen
+        leaveSession();
+        screen = ScreenState::NotEnoughPlayers;
+        return;
+    }
+
     // Input bits
     std::uint8_t bits = 0;
     if (IsKeyDown(KEY_LEFT))  bits |= rtype::net::InputLeft;
@@ -394,7 +471,6 @@ void Screens::drawGameplay(ScreenState& screen) {
         _lastSend = now;
     }
 
-    pumpNetworkOnce();
 
     // --- HUD (Top other players + Bottom bar for lives/score/level) ---
     int w = GetScreenWidth();

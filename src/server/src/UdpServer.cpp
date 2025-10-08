@@ -101,6 +101,12 @@ void UdpServer::handlePacket(const asio::ip::udp::endpoint& from, const char* da
         }
         return;
     }
+
+    if (header->type == rtype::net::MsgType::Disconnect) {
+        // Client explicitly disconnects
+        removeClient(key);
+        return;
+    }
 }
 
 void UdpServer::gameLoop() {
@@ -222,6 +228,14 @@ void UdpServer::removeClient(const std::string& key) {
     // Send roster once to update remaining clients' top bar
     broadcastRoster();
     std::cout << "[server] Removed disconnected client: " << key << "\n";
+
+    // If less than 2 players remain, notify remaining players to return to menu
+    if (endpointToPlayerId_.size() > 0 && endpointToPlayerId_.size() < 2) {
+        rtype::net::Header rtm{0, rtype::net::MsgType::ReturnToMenu, rtype::net::ProtocolVersion};
+        for (auto& [_, ep] : keyToEndpoint_) {
+            doSend(ep, &rtm, sizeof(rtm));
+        }
+    }
 }
 
 void UdpServer::broadcastState() {
