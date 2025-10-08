@@ -19,6 +19,14 @@ namespace {
     } g;
 }
 
+void Screens::leaveSession() {
+    // Gracefully leave any active multiplayer session
+    teardownNet();
+    _connected = false;
+    _entities.clear();
+    _serverReturnToMenu = false;
+}
+
 static int baseFontFromHeight(int h) {
     int baseFont = (int)(h * 0.045f);
     if (baseFont < 16) baseFont = 16;

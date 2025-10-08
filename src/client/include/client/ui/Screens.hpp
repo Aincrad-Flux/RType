@@ -38,6 +38,8 @@ public:
     void drawOptions();
     void drawLeaderboard();
     static void logMessage(const std::string& msg, const char* level = "INFO");
+    // Gracefully leave any active multiplayer session (sends Disconnect, closes socket)
+    void leaveSession();
 private:
     int _focusedField = 0; // 0=user, 1=addr, 2=port
     std::string _statusMessage;

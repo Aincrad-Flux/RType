@@ -30,8 +30,13 @@ void App::run() {
         t += dt;
 
         if (IsKeyPressed(KEY_ESCAPE)) {
-            if (_screen == ScreenState::Menu) _screen = ScreenState::Exiting;
-            else _screen = ScreenState::Menu;
+            if (_screen == ScreenState::Menu) {
+                _screen = ScreenState::Exiting;
+            } else {
+                // Leaving current screen back to menu; ensure we leave any active session
+                _screens.leaveSession();
+                _screen = ScreenState::Menu;
+            }
         }
 
         BeginDrawing();
@@ -57,6 +62,9 @@ void App::run() {
 
         EndDrawing();
     }
+
+    // On exit, ensure we disconnect cleanly if needed
+    _screens.leaveSession();
 
     CloseWindow();
 }
