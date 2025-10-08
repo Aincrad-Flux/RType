@@ -45,7 +45,8 @@ void App::run() {
             case ScreenState::Waiting: _screens.drawWaiting(_screen); break;
             case ScreenState::Gameplay:
                 if (!_resizedForGameplay) {
-                    SetWindowSize(screenWidth * 1, screenHeight * 1);
+                    // Slightly increase height to make room for the bottom bar
+                    SetWindowSize(screenWidth, (int)(screenHeight * 1.10f));
                     _resizedForGameplay = true;
                 }
                 _screens.drawGameplay(_screen);
