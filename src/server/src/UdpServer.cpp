@@ -5,8 +5,7 @@
 #include <chrono>
 #include "rt/game/Components.hpp"
 #include "rt/game/Systems.hpp"
-
-namespace rtype::server {
+using namespace rtype::server;
 
 static std::string makeKey(const asio::ip::udp::endpoint& ep) {
     return ep.address().to_string() + ":" + std::to_string(ep.port());
@@ -310,4 +309,3 @@ void UdpServer::doSend(const asio::ip::udp::endpoint& to, const void* data, std:
     socket_.async_send_to(asio::buffer(*buf), to, [buf](std::error_code, std::size_t) {});
 }
 
-}

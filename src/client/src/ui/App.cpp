@@ -1,9 +1,7 @@
 #include "../../include/client/ui/App.hpp"
 #include <raylib.h>
 #include <cmath>
-
-namespace client {
-namespace ui {
+using namespace client::ui;
 
 static void drawStarfield(float t) {
     for (int i = 0; i < 300; ++i) {
@@ -61,6 +59,3 @@ void App::run() {
 
     CloseWindow();
 }
-
-} // namespace ui
-} // namespace client

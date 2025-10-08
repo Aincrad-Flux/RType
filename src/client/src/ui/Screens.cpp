@@ -12,9 +12,7 @@
 #include <chrono>
 #include <string>
 #include "common/Protocol.hpp"
-
-namespace client {
-namespace ui {
+using namespace client::ui;
 
 namespace {
     struct UdpClientGlobals {
@@ -563,7 +561,7 @@ void Screens::drawGameplay(ScreenState& screen) {
             if (e.x < 0) e.x = 0;
             if (e.x + shipW > w) e.x = (float)(w - shipW);
             DrawRectangle((int)e.x, (int)e.y, shipW, shipH, c);
-        if (e.type == 1) {
+            // Draw textured player sprite (or fallback) on top of the rectangle
             // Get or assign a fixed row for this player id
             int rowIndex;
             auto it = _spriteRowById.find(e.id);
@@ -676,6 +674,3 @@ void Screens::drawGameplay(ScreenState& screen) {
         }
     }
 }
-
-} // namespace ui
-} // namespace client

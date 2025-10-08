@@ -4,8 +4,7 @@
 #include <limits>
 #include <vector>
 #include "rt/game/Systems.hpp"
-
-namespace rt::game {
+using namespace rt::game;
 
 void InputSystem::update(rt::ecs::Registry& r, float dt) {
     (void)dt;
@@ -466,4 +465,3 @@ void InvincibilitySystem::update(rt::ecs::Registry& r, float dt) {
     }
 }
 
-}
