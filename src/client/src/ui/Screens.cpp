@@ -20,6 +20,11 @@ namespace {
         std::unique_ptr<asio::ip::udp::socket> sock;
         asio::ip::udp::endpoint server;
     } g;
+    // Scale factor for enemy visual hitbox (only affects the red outline)
+    static constexpr float kEnemyHitboxScale = 1.25f; // 25% larger than sprite bounds
+    // Server-side AABB for small enemies (EntityType 2 default)
+    static constexpr float kEnemyAabbW = 27.0f;
+    static constexpr float kEnemyAabbH = 18.0f;
 }
 
 static int baseFontFromHeight(int h) {
@@ -455,21 +460,58 @@ void Screens::drawGameplay(ScreenState& screen) {
     if (!_sheetLoaded) loadSprites();
     if (!_enemyLoaded) loadEnemySprites();
 
-    // Input bits
+    // Update world snapshot first so we can gate inputs using current position
+    pumpNetworkOnce();
+
+    // Gate player inputs so the player cannot leave the window
+    int gw = GetScreenWidth();
+    int gh = GetScreenHeight();
+    int ghudFont = (int)(gh * 0.045f); if (ghudFont < 16) ghudFont = 16;
+    int gmargin = 16;
+    int gTopReserved = 0; // previously reserved HUD; now allow full vertical space like bullets
+    int gBottomBarH = 0;  // no bottom reservation for movement gating
+    // Find self entity
+    const PackedEntity* self = nullptr;
+    for (const auto& ent : _entities) {
+        if (ent.type == 1 && ent.id == _selfId) { self = &ent; break; }
+    }
+    // Build input bits with edge gating
     std::uint8_t bits = 0;
-    if (IsKeyDown(KEY_LEFT))  bits |= rtype::net::InputLeft;
-    if (IsKeyDown(KEY_RIGHT)) bits |= rtype::net::InputRight;
-    if (IsKeyDown(KEY_UP))    bits |= rtype::net::InputUp;
-    if (IsKeyDown(KEY_DOWN))  bits |= rtype::net::InputDown;
-    if (IsKeyDown(KEY_SPACE)) bits |= rtype::net::InputShoot;
+    bool wantLeft  = IsKeyDown(KEY_LEFT);
+    bool wantRight = IsKeyDown(KEY_RIGHT);
+    bool wantUp    = IsKeyDown(KEY_UP);
+    bool wantDown  = IsKeyDown(KEY_DOWN);
+    bool wantShoot = IsKeyDown(KEY_SPACE);
+    if (self) {
+        // Estimate drawn size for the player sprite
+        const float playerScale = 1.18f;
+        float drawW = (_sheetLoaded && _frameW > 0) ? (_frameW * playerScale) : 24.0f;
+        float drawH = (_sheetLoaded && _frameH > 0) ? (_frameH * playerScale) : 14.0f;
+        const float xOffset = -6.0f; // applied at draw time
+        float dstX = self->x + xOffset;
+        float dstY = self->y;
+        float minX = 0.0f;
+        float maxX = (float)gw - drawW;
+        float minY = 0.0f;
+        float maxY = (float)gh - drawH;
+        if (wantLeft  && dstX > minX) bits |= rtype::net::InputLeft;
+        if (wantRight && dstX < maxX) bits |= rtype::net::InputRight;
+        if (wantUp    && dstY > minY) bits |= rtype::net::InputUp;
+        if (wantDown  && dstY < maxY) bits |= rtype::net::InputDown;
+    } else {
+        // Fallback: no gating if we don't know self position yet
+        if (wantLeft)  bits |= rtype::net::InputLeft;
+        if (wantRight) bits |= rtype::net::InputRight;
+        if (wantUp)    bits |= rtype::net::InputUp;
+        if (wantDown)  bits |= rtype::net::InputDown;
+    }
+    if (wantShoot) bits |= rtype::net::InputShoot;
 
     double now = GetTime();
     if (now - _lastSend > 1.0/30.0) {
         sendInput(bits);
         _lastSend = now;
     }
-
-    pumpNetworkOnce();
 
     // --- HUD (Top other players + Bottom bar for lives/score/level) ---
     int w = GetScreenWidth();
@@ -506,7 +548,7 @@ void Screens::drawGameplay(ScreenState& screen) {
         DrawText(more.c_str(), xCursor, topY, hudFont, LIGHTGRAY);
     }
 
-    // Height reserved by top area
+    // Height reserved by top area (no longer used for clamping player)
     int topReserved = topY + hudFont + margin;
 
     // Bottom bar: player's lives (left), score (center), level (right)
@@ -539,9 +581,9 @@ void Screens::drawGameplay(ScreenState& screen) {
     int lvlX = w - margin - lvlW;
     DrawText(lvlStr.c_str(), lvlX, textY, hudFont, (Color){200, 200, 80, 255});
 
-    // Playable area bounds (avoid overlapping top and bottom UI)
-    int playableMinY = topReserved;
-    int playableMaxY = h - bottomBarH;
+    // Playable area bounds for drawing (allow full window like bullets)
+    int playableMinY = 0;
+    int playableMaxY = h;
 
     if (_entities.empty()) {
         titleCentered("Connecting to game...", (int)(GetScreenHeight()*0.5f), 24, RAYWHITE);
@@ -552,16 +594,13 @@ void Screens::drawGameplay(ScreenState& screen) {
         auto& e = _entities[i];
         Color c = {(unsigned char)((e.rgba>>24)&0xFF),(unsigned char)((e.rgba>>16)&0xFF),(unsigned char)((e.rgba>>8)&0xFF),(unsigned char)(e.rgba&0xFF)};
         if (e.type == 1) { // Player (on applique les contraintes)
-            // Taille du vaisseau
+            // Taille du vaisseau pour le fallback rect
             int shipW = 20, shipH = 12;
-            // Empêcher de passer dans les barres HUD
+            // Clamp to full window vertically and horizontally
             if (e.y < playableMinY) e.y = (float)playableMinY;
             if (e.y + shipH > playableMaxY) e.y = (float)(playableMaxY - shipH);
-            // Empêcher de sortir de l'écran horizontalement
             if (e.x < 0) e.x = 0;
             if (e.x + shipW > w) e.x = (float)(w - shipW);
-            DrawRectangle((int)e.x, (int)e.y, shipW, shipH, c);
-            // Draw textured player sprite (or fallback) on top of the rectangle
             // Get or assign a fixed row for this player id
             int rowIndex;
             auto it = _spriteRowById.find(e.id);
@@ -578,80 +617,37 @@ void Screens::drawGameplay(ScreenState& screen) {
                 float drawW = _frameW * playerScale;
                 float drawH = _frameH * playerScale;
                 // Apply a small left offset and clamp using destination coords
-                const float xOffset = -6.0f; // shift a few pixels left
+                const float xOffset = -6.0f;
                 float dstX = e.x + xOffset;
                 float dstY = e.y;
-                int w = GetScreenWidth();
-                int h = GetScreenHeight();
-                int hudBottom = 16 + (int)(GetScreenHeight() * 0.045f); // approximate; already computed above in original code
-                if (dstY < hudBottom) dstY = (float)hudBottom;
+                if (dstY < playableMinY) dstY = (float)playableMinY;
                 if (dstX < 0) dstX = 0;
                 if (dstX + drawW > w) dstX = (float)(w - drawW);
-                if (dstY + drawH > h) dstY = (float)(h - drawH);
+                if (dstY + drawH > playableMaxY) dstY = (float)(playableMaxY - drawH);
                 Rectangle src{ _frameW * colIndex, _frameH * rowIndex, _frameW, _frameH };
                 Rectangle dst{ dstX, dstY, drawW, drawH };
                 Vector2 origin{ 0.0f, 0.0f };
                 DrawTexturePro(_sheet, src, dst, origin, 0.0f, WHITE);
-                // Draw hitbox of the ship (player)
-                DrawRectangleLines((int)dst.x, (int)dst.y, (int)dst.width, (int)dst.height, (Color){0, 255, 0, 200});
             } else {
-                int shipW = 24, shipH = 14;
-                const float xOffset = -6.0f;
-                float dstX = e.x + xOffset;
-                float dstY = e.y;
-                int w = GetScreenWidth();
-                int h = GetScreenHeight();
-                int hudBottom = 16 + (int)(GetScreenHeight() * 0.045f);
-                if (dstY < hudBottom) dstY = (float)hudBottom;
-                if (dstX < 0) dstX = 0;
-                if (dstX + shipW > w) dstX = (float)(w - shipW);
-                if (dstY + shipH > h) dstY = (float)(h - shipH);
-                DrawRectangle((int)dstX, (int)dstY, shipW, shipH, c);
-                DrawRectangleLines((int)dstX, (int)dstY, shipW, shipH, (Color){0, 255, 0, 200});
+                // No fallback debug rectangle: keep player invisible if sprite isn't available
             }
         } else if (e.type == 2) { // Enemy
             if (_enemyLoaded && _enemyFrameW > 0 && _enemyFrameH > 0) {
-                // Per user spec: choose sprite at column 5, row 3 (1-based) on a 7x3 grid
-                const int colIndex = 4; // zero-based
-                const int rowIndex = 2; // zero-based
-                float drawW = _enemyFrameW * 1.1f; // slight upscale for visibility
-                float drawH = _enemyFrameH * 1.1f;
-                // Shift about twenty pixels to the left
-                float dstX = e.x - 20.0f;
-                float dstY = e.y;
-                int w = GetScreenWidth();
-                int h = GetScreenHeight();
-                int hudBottom = 16 + (int)(GetScreenHeight() * 0.045f);
-                if (dstY < hudBottom) dstY = (float)hudBottom;
-                if (dstY + drawH > h) dstY = (float)(h - drawH);
-                if (dstX < 0) dstX = 0;
-                if (dstX + drawW > w) dstX = (float)(w - drawW);
-                Rectangle src{ _enemyFrameW * colIndex, _enemyFrameH * rowIndex, _enemyFrameW, _enemyFrameH };
-                Rectangle dst{ dstX, dstY, drawW, drawH };
+                // Last row is staggered (quinconce): use fractional column index 3.5 on row 2 (zero-based)
+                const float colIndex = 2.5f; // zero-based fractional column
+                const int rowIndex = 2;      // zero-based last row
+                const float cropPx = 10.0f;
+                float srcH = _enemyFrameH - cropPx;
+                if (srcH < 1.0f) srcH = 1.0f; // avoid zero/negative height
+                // Draw aligned to server AABB (top-left at e.x/e.y)
+                Rectangle src{ _enemyFrameW * colIndex, _enemyFrameH * rowIndex, _enemyFrameW, srcH };
+                Rectangle dst{ e.x, e.y, kEnemyAabbW, kEnemyAabbH };
                 Vector2 origin{ 0.0f, 0.0f };
                 DrawTexturePro(_enemySheet, src, dst, origin, 0.0f, WHITE);
-                // Draw hitbox for the enemy ship too (for clarity)
-                DrawRectangleLines((int)dst.x, (int)dst.y, (int)dst.width, (int)dst.height, (Color){255, 0, 0, 200});
+                // Removed enemy debug hitbox outline
             } else {
-                int ew = 18, eh = 12;
-                float dstX = e.x - 20.0f;
-                float dstY = e.y;
-                int w = GetScreenWidth();
-                int h = GetScreenHeight();
-                int hudBottom = 16 + (int)(GetScreenHeight() * 0.045f);
-                if (dstY < hudBottom) dstY = (float)hudBottom;
-                if (dstY + eh > h) dstY = (float)(h - eh);
-                if (dstX < 0) dstX = 0;
-                if (dstX + ew > w) dstX = (float)(w - ew);
-                DrawRectangle((int)dstX, (int)dstY, ew, eh, c);
-                DrawRectangleLines((int)dstX, (int)dstY, ew, eh, (Color){255, 0, 0, 200});
+                // No fallback rectangle for enemies to avoid drawing squares
             }
-        } else if (e.type == 3) {
-            // Enemies: clamp to playable vertical area so they don't overlap HUD or go below screen
-            int ew = 18, eh = 12;
-            if (e.y < playableMinY) e.y = (float)playableMinY;
-            if (e.y + eh > playableMaxY) e.y = (float)(playableMaxY - eh);
-            DrawRectangle((int)e.x, (int)e.y, ew, eh, c);
         } else if (e.type == 3) { // Bullet
             DrawRectangle((int)e.x, (int)e.y, 6, 3, c);
         }

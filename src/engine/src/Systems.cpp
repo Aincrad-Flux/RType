@@ -219,7 +219,7 @@ rt::ecs::Entity FormationSpawnSystem::spawnSnake(rt::ecs::Registry& r, float y, 
         r.emplace<NetType>(e, {static_cast<rtype::net::EntityType>(2)});
         r.emplace<ColorRGBA>(e, {0xFF5555FFu});
         r.emplace<EnemyTag>(e, {});
-        r.emplace<Size>(e, {18.f, 12.f});
+        r.emplace<Size>(e, {27.f, 18.f});
         r.emplace<FormationFollower>(e, {origin, static_cast<std::uint16_t>(i), i * 36.f, 0.f});
     }
     return origin;
@@ -237,7 +237,7 @@ rt::ecs::Entity FormationSpawnSystem::spawnLine(rt::ecs::Registry& r, float y, i
     r.emplace<NetType>(e, {static_cast<rtype::net::EntityType>(2)});
         r.emplace<ColorRGBA>(e, {0xE06666FFu});
         r.emplace<EnemyTag>(e, {});
-        r.emplace<Size>(e, {18.f, 12.f});
+        r.emplace<Size>(e, {27.f, 18.f});
         r.emplace<FormationFollower>(e, {origin, static_cast<std::uint16_t>(i), i * 40.f, 0.f});
     }
     return origin;
@@ -257,7 +257,7 @@ rt::ecs::Entity FormationSpawnSystem::spawnGrid(rt::ecs::Registry& r, float y, i
             r.emplace<NetType>(e, {static_cast<rtype::net::EntityType>(2)});
             r.emplace<ColorRGBA>(e, {0xCC4444FFu});
             r.emplace<EnemyTag>(e, {});
-            r.emplace<Size>(e, {18.f, 12.f});
+            r.emplace<Size>(e, {27.f, 18.f});
             r.emplace<FormationFollower>(e, {origin, static_cast<std::uint16_t>(idx), cc * 36.f, rr * 36.f});
         }
     }
@@ -283,7 +283,7 @@ rt::ecs::Entity FormationSpawnSystem::spawnTriangle(rt::ecs::Registry& r, float 
             r.emplace<NetType>(e, {static_cast<rtype::net::EntityType>(2)});
             r.emplace<ColorRGBA>(e, {0xDD7777FFu});
             r.emplace<EnemyTag>(e, {});
-            r.emplace<Size>(e, {18.f, 12.f});
+            r.emplace<Size>(e, {27.f, 18.f});
             r.emplace<FormationFollower>(e, {origin, static_cast<std::uint16_t>(idx++), localX, localY});
         }
     }
@@ -324,7 +324,7 @@ void FormationSpawnSystem::update(rt::ecs::Registry& r, float dt) {
     constexpr float kWorldH = 600.f;
     constexpr float kTopMargin = 56.f;
     constexpr float kBottomMargin = 10.f;
-    constexpr float kEnemyH = 12.f; // default enemy sprite height
+    constexpr float kEnemyH = 18.f; // default enemy sprite height (increased)
     constexpr float kSpacing = 36.f;
     std::uniform_int_distribution<int> pick(0, 4);
     int k = pick(rng_);
@@ -464,4 +464,3 @@ void InvincibilitySystem::update(rt::ecs::Registry& r, float dt) {
         }
     }
 }
-
