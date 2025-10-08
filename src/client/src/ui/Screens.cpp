@@ -6,6 +6,9 @@
 #include <iostream>
 #include <vector>
 #include <cstring>
+#include <algorithm>
+#include <thread>
+#include <chrono>
 #include "common/Protocol.hpp"
 
 namespace client {
@@ -132,6 +135,11 @@ void Screens::drawMultiplayer(ScreenState& screen, MultiplayerForm& form) {
                 _username = form.username;
                 _serverAddr = form.serverAddress;
                 _serverPort = form.serverPort;
+                // Reset HUD/network-related state before connecting
+                _selfId = 0;
+                _playerLives = 4; // will be updated by Roster/LivesUpdate
+                _gameOver = false;
+                _otherPlayers.clear();
 
                 // Ensure a persistent UDP socket is created and send Hello once
                 teardownNet();
@@ -154,6 +162,8 @@ void Screens::drawMultiplayer(ScreenState& screen, MultiplayerForm& form) {
                     } else if (ec && ec != asio::error::would_block) {
                         logMessage(std::string("Receive error: ") + ec.message(), "ERROR");
                     }
+                    // Avoid busy-waiting to keep UI smooth
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
                 }
                 if (ok) {
                     _statusMessage = std::string("Player Connected.");
@@ -240,26 +250,79 @@ void Screens::pumpNetworkOnce() {
     std::array<char, 8192> in{};
     asio::error_code ec;
     std::size_t n = g.sock->receive_from(asio::buffer(in), from, 0, ec);
+    if (ec == asio::error::would_block) return;
     if (ec || n < sizeof(rtype::net::Header)) return;
     auto* h = reinterpret_cast<const rtype::net::Header*>(in.data());
     if (h->version != rtype::net::ProtocolVersion) return;
-    if (h->type != rtype::net::MsgType::State) return;
-    const char* p = in.data() + sizeof(rtype::net::Header);
-    if (n < sizeof(rtype::net::Header) + sizeof(rtype::net::StateHeader)) return;
-    auto* sh = reinterpret_cast<const rtype::net::StateHeader*>(p);
-    p += sizeof(rtype::net::StateHeader);
-    std::size_t count = sh->count;
-    if (n < sizeof(rtype::net::Header) + sizeof(rtype::net::StateHeader) + count * sizeof(rtype::net::PackedEntity)) return;
-    _entities.clear();
-    _entities.reserve(count);
-    auto* arr = reinterpret_cast<const rtype::net::PackedEntity*>(p);
-    for (std::size_t i = 0; i < count; ++i) {
-        PackedEntity e{};
-        e.id = arr[i].id;
-        e.type = static_cast<unsigned char>(arr[i].type);
-        e.x = arr[i].x; e.y = arr[i].y; e.vx = arr[i].vx; e.vy = arr[i].vy;
-        e.rgba = arr[i].rgba;
-        _entities.push_back(e);
+    if (h->type == rtype::net::MsgType::State) {
+        const char* p = in.data() + sizeof(rtype::net::Header);
+        if (n < sizeof(rtype::net::Header) + sizeof(rtype::net::StateHeader)) return;
+        auto* sh = reinterpret_cast<const rtype::net::StateHeader*>(p);
+        p += sizeof(rtype::net::StateHeader);
+        std::size_t count = sh->count;
+        if (n < sizeof(rtype::net::Header) + sizeof(rtype::net::StateHeader) + count * sizeof(rtype::net::PackedEntity)) return;
+        _entities.clear();
+        _entities.reserve(count);
+        auto* arr = reinterpret_cast<const rtype::net::PackedEntity*>(p);
+        for (std::size_t i = 0; i < count; ++i) {
+            PackedEntity e{};
+            e.id = arr[i].id;
+            e.type = static_cast<unsigned char>(arr[i].type);
+            e.x = arr[i].x; e.y = arr[i].y; e.vx = arr[i].vx; e.vy = arr[i].vy;
+            e.rgba = arr[i].rgba;
+            _entities.push_back(e);
+        }
+        return;
+    } else if (h->type == rtype::net::MsgType::Roster) {
+        const char* p = in.data() + sizeof(rtype::net::Header);
+        if (n < sizeof(rtype::net::Header) + sizeof(rtype::net::RosterHeader)) return;
+        auto* rh = reinterpret_cast<const rtype::net::RosterHeader*>(p);
+        p += sizeof(rtype::net::RosterHeader);
+        std::size_t count = rh->count;
+        if (n < sizeof(rtype::net::Header) + sizeof(rtype::net::RosterHeader) + count * sizeof(rtype::net::PlayerEntry)) return;
+        _otherPlayers.clear();
+        // Determine truncated username as stored by server (15 chars max)
+        std::string unameTrunc = _username.substr(0, 15);
+        for (std::size_t i = 0; i < count; ++i) {
+            auto* pe = reinterpret_cast<const rtype::net::PlayerEntry*>(p + i * sizeof(rtype::net::PlayerEntry));
+            std::string name(pe->name, pe->name + strnlen(pe->name, sizeof(pe->name)));
+            int lives = std::clamp<int>(pe->lives, 0, 10);
+            if (name == unameTrunc) {
+                _playerLives = lives;
+                _selfId = pe->id;
+                continue; // don't include self in top bar list
+            }
+            _otherPlayers.push_back({pe->id, name, lives});
+        }
+        // Keep at most 3 teammates in top bar
+        if (_otherPlayers.size() > 3)
+            _otherPlayers.resize(3);
+        return;
+    } else if (h->type == rtype::net::MsgType::LivesUpdate) {
+        const char* p = in.data() + sizeof(rtype::net::Header);
+        if (n < sizeof(rtype::net::Header) + sizeof(rtype::net::LivesUpdatePayload)) return;
+        auto* lu = reinterpret_cast<const rtype::net::LivesUpdatePayload*>(p);
+        unsigned id = lu->id;
+        int lives = std::clamp<int>(lu->lives, 0, 10);
+        if (id == _selfId) {
+            _playerLives = lives;
+            _gameOver = (_playerLives <= 0);
+        } else {
+            for (auto& op : _otherPlayers) {
+                if (op.id == id) { op.lives = lives; break; }
+            }
+        }
+        return;
+    } else if (h->type == rtype::net::MsgType::ScoreUpdate) {
+        const char* p = in.data() + sizeof(rtype::net::Header);
+        if (n < sizeof(rtype::net::Header) + sizeof(rtype::net::ScoreUpdatePayload)) return;
+        auto* su = reinterpret_cast<const rtype::net::ScoreUpdatePayload*>(p);
+        if (su->id == _selfId) {
+            _score = su->score;
+        }
+        return;
+    } else {
+        return;
     }
 }
 
@@ -333,38 +396,77 @@ void Screens::drawGameplay(ScreenState& screen) {
 
     pumpNetworkOnce();
 
-    // --- HUD ---
+    // --- HUD (Top other players + Bottom bar for lives/score/level) ---
     int w = GetScreenWidth();
     int h = GetScreenHeight();
     int hudFont = (int)(h * 0.045f);
     if (hudFont < 16) hudFont = 16;
     int margin = 16;
 
-    // Nom du joueur (en haut à gauche)
-    DrawText(_username.c_str(), margin, margin, hudFont, RAYWHITE);
-
-    // Niveau (Lv) à droite du nom
-    int nameWidth = MeasureText(_username.c_str(), hudFont);
-    int lv = 1; // TODO: remplacer par la vraie valeur du niveau si disponible
-    std::string lvStr = "Lv " + std::to_string(lv);
-    int lvX = margin + nameWidth + 16;
-    DrawText(lvStr.c_str(), lvX, margin, hudFont, (Color){200, 200, 80, 255});
-
-    // Barre de HP sur la même ligne, à droite du lvl
-    float hp = 1.0f; // TODO: remplacer par la vraie valeur de HP (0.0 à 1.0)
-    int lvWidth = MeasureText(lvStr.c_str(), hudFont);
-    int barX = lvX + lvWidth + 32;
-    int barY = margin + hudFont/4;
-    int barH = hudFont/2;
-    int barW = w - barX - margin;
-    if (barW > 0) {
-        DrawRectangle(barX, barY, barW, barH, DARKGRAY);
-        DrawRectangle(barX, barY, (int)(barW * hp), barH, (Color){120, 220, 120, 255});
-        DrawRectangleLines(barX, barY, barW, barH, RAYWHITE);
+    // Top area: show up to 3 teammates (exclude self), capping lives icons to 3
+    int topY = margin;
+    int xCursor = margin;
+    int shown = 0;
+    for (size_t i = 0; i < _otherPlayers.size() && shown < 3; ++i, ++shown) {
+        const auto& op = _otherPlayers[i];
+        // Name
+        DrawText(op.name.c_str(), xCursor, topY, hudFont, RAYWHITE);
+        int nameW = MeasureText(op.name.c_str(), hudFont);
+        xCursor += nameW + 12;
+        // Lives as small red squares (cap to 3)
+        int iconSize = std::max(6, hudFont / 2 - 2);
+        int iconGap  = std::max(3, iconSize / 3);
+        int livesToDraw = std::min(3, std::max(0, op.lives));
+        int iconsW = livesToDraw * iconSize + (livesToDraw > 0 ? (livesToDraw - 1) * iconGap : 0);
+        int iconY = topY + (hudFont - iconSize) / 2;
+        for (int k = 0; k < livesToDraw; ++k) {
+            int ix = xCursor + k * (iconSize + iconGap);
+            DrawRectangle(ix, iconY, iconSize, iconSize, (Color){220, 80, 80, 255});
+        }
+        xCursor += iconsW + 24; // spacing to next player
+    }
+    // If more than 3 teammates, show overflow counter
+    if (_otherPlayers.size() > 3) {
+        std::string more = "x " + std::to_string(_otherPlayers.size() - 3);
+        DrawText(more.c_str(), xCursor, topY, hudFont, LIGHTGRAY);
     }
 
-    // Calculer la zone HUD pour empêcher le joueur de passer dessous
-    int hudBottom = margin + hudFont;
+    // Height reserved by top area
+    int topReserved = topY + hudFont + margin;
+
+    // Bottom bar: player's lives (left), score (center), level (right)
+    int bottomBarH = std::max((int)(h * 0.10f), hudFont + margin);
+    int bottomY = h - bottomBarH;
+    DrawRectangle(0, bottomY, w, bottomBarH, (Color){20, 20, 20, 200});
+    DrawRectangleLines(0, bottomY, w, bottomBarH, (Color){60, 60, 60, 255});
+
+    // Left: lives 0..10
+    int iconSize = std::max(10, std::min(18, bottomBarH - margin - 10));
+    int iconGap  = std::max(4, iconSize / 3);
+    int livesToDraw = std::min(10, std::max(0, _playerLives));
+    int iconRowY = bottomY + (bottomBarH - iconSize) / 2;
+    int iconRowX = margin;
+    for (int i = 0; i < 10; ++i) {
+        Color c = (i < livesToDraw) ? (Color){220, 80, 80, 255} : (Color){70, 70, 70, 255};
+        DrawRectangle(iconRowX + i * (iconSize + iconGap), iconRowY, iconSize, iconSize, c);
+    }
+
+    // Center: Score
+    std::string scoreStr = "Score: " + std::to_string(_score);
+    int scoreW = MeasureText(scoreStr.c_str(), hudFont);
+    int scoreX = (w - scoreW) / 2;
+    int textY = bottomY + (bottomBarH - hudFont) / 2;
+    DrawText(scoreStr.c_str(), scoreX, textY, hudFont, RAYWHITE);
+
+    // Right: Level (Niveau)
+    std::string lvlStr = "Niveau " + std::to_string(_level);
+    int lvlW = MeasureText(lvlStr.c_str(), hudFont);
+    int lvlX = w - margin - lvlW;
+    DrawText(lvlStr.c_str(), lvlX, textY, hudFont, (Color){200, 200, 80, 255});
+
+    // Playable area bounds (avoid overlapping top and bottom UI)
+    int playableMinY = topReserved;
+    int playableMaxY = h - bottomBarH;
 
     if (_entities.empty()) {
         titleCentered("Connecting to game...", (int)(GetScreenHeight()*0.5f), 24, RAYWHITE);
@@ -376,21 +478,38 @@ void Screens::drawGameplay(ScreenState& screen) {
         if (e.type == 1) { // Player (on applique les contraintes)
             // Taille du vaisseau
             int shipW = 20, shipH = 12;
-            // Empêcher de passer sous le HUD
-            if (e.y < hudBottom) e.y = (float)hudBottom;
-            // Empêcher de sortir de l'écran
+            // Empêcher de passer dans les barres HUD
+            if (e.y < playableMinY) e.y = (float)playableMinY;
+            if (e.y + shipH > playableMaxY) e.y = (float)(playableMaxY - shipH);
+            // Empêcher de sortir de l'écran horizontalement
             if (e.x < 0) e.x = 0;
             if (e.x + shipW > w) e.x = (float)(w - shipW);
-            if (e.y + shipH > h) e.y = (float)(h - shipH);
             DrawRectangle((int)e.x, (int)e.y, shipW, shipH, c);
         } else if (e.type == 2) { // Enemy
             // Enemies: clamp to playable vertical area so they don't overlap HUD or go below screen
             int ew = 18, eh = 12;
-            if (e.y < hudBottom) e.y = (float)hudBottom;
-            if (e.y + eh > h) e.y = (float)(h - eh);
+            if (e.y < playableMinY) e.y = (float)playableMinY;
+            if (e.y + eh > playableMaxY) e.y = (float)(playableMaxY - eh);
             DrawRectangle((int)e.x, (int)e.y, ew, eh, c);
         } else if (e.type == 3) { // Bullet
             DrawRectangle((int)e.x, (int)e.y, 6, 3, c);
+        }
+    }
+
+    // Game Over overlay and input to return to menu
+    if (_gameOver) {
+        DrawRectangle(0, 0, w, h, (Color){0, 0, 0, 180});
+        titleCentered("GAME OVER", (int)(h * 0.40f), (int)(h * 0.10f), RED);
+        std::string finalScore = "Score: " + std::to_string(_score);
+        titleCentered(finalScore.c_str(), (int)(h * 0.52f), (int)(h * 0.06f), RAYWHITE);
+        titleCentered("Press ESC to return to menu", (int)(h * 0.62f), (int)(h * 0.04f), LIGHTGRAY);
+        if (IsKeyPressed(KEY_ESCAPE)) {
+            teardownNet();
+            _connected = false;
+            _entities.clear();
+            _gameOver = false;
+            screen = ScreenState::Menu;
+            return;
         }
     }
 }

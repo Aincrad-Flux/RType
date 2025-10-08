@@ -19,6 +19,12 @@ struct EnemyTag {};
 enum class BulletFaction : std::uint8_t { Player = 0, Enemy = 1 };
 struct BulletTag { BulletFaction faction = BulletFaction::Player; };
 
+// Server-side player score
+struct Score { std::int32_t value = 0; };
+
+// Associate a bullet with its owner's entity id
+struct BulletOwner { rt::ecs::Entity owner = 0; };
+
 // Shooter capability (cooldown-based continuous fire)
 struct Shooter {
     float cooldown = 0.f;     // time left before next shot
@@ -33,6 +39,12 @@ struct EnemyShooter {
     float bulletSpeed = 220.f;  // px/s for enemy bullets
     float accuracy = 0.6f;      // 0..1, fraction of accuracy (we use 0.5..0.8)
 };
+
+// Marker set when a player has been hit by an enemy bullet this frame
+struct HitFlag { bool value = false; };
+
+// Temporary invincibility (i-frames) after being hit, in seconds
+struct Invincible { float timeLeft = 0.f; };
 
 enum class FormationType : std::uint8_t { None = 0, Snake, Line, GridRect, Triangle };
 

@@ -59,6 +59,7 @@ void ShootingSystem::update(rt::ecs::Registry& r, float dt) {
             r.emplace<NetType>(b, {static_cast<rtype::net::EntityType>(3)});
             r.emplace<ColorRGBA>(b, {0xFFFF55FFu});
             r.emplace<BulletTag>(b, {BulletFaction::Player});
+            r.emplace<BulletOwner>(b, {e});
             r.emplace<Size>(b, {6.f, 3.f});
         }
     }
@@ -411,17 +412,58 @@ void CollisionSystem::update(rt::ecs::Registry& r, float dt) {
         if (bt->faction == BulletFaction::Player) {
             // hit enemies
             for (auto& [e, _] : r.storage<EnemyTag>().data()) {
-                if (intersects(b, e)) { toDestroy.push_back(b); toDestroy.push_back(e); break; }
+                if (intersects(b, e)) {
+                    // award score to bullet owner if any
+                    if (auto* bo = r.get<BulletOwner>(b)) {
+                        if (auto* sc = r.get<Score>(bo->owner)) {
+                            bool isShooter = r.get<EnemyShooter>(e) != nullptr;
+                            sc->value += isShooter ? 200 : 100;
+                        }
+                    }
+                    toDestroy.push_back(b);
+                    toDestroy.push_back(e);
+                    break;
+                }
             }
         } else {
             // enemy bullets hit players
             for (auto& [e, _] : r.storage<PlayerInput>().data()) {
                 // players have PlayerInput component
-                if (intersects(b, e)) { toDestroy.push_back(b); toDestroy.push_back(e); break; }
+                if (!intersects(b, e)) continue;
+                // If player is currently invincible, ignore this hit (but still destroy bullet)
+                if (auto* inv = r.get<Invincible>(e)) {
+                    if (inv->timeLeft > 0.f) { toDestroy.push_back(b); break; }
+                }
+                // Mark player as hit; server will process lives decrement
+                if (auto* hf = r.get<HitFlag>(e)) {
+                    hf->value = true;
+                } else {
+                    r.emplace<HitFlag>(e, {true});
+                }
+                // Apply a brief invincibility to prevent immediate re-hits
+                if (auto* inv = r.get<Invincible>(e)) {
+                    inv->timeLeft = std::max(inv->timeLeft, 1.0f);
+                } else {
+                    r.emplace<Invincible>(e, {1.0f});
+                }
+                toDestroy.push_back(b);
+                break;
             }
         }
     }
     for (auto e : toDestroy) r.destroy(e);
+}
+
+// Decrement invincibility timers each frame
+void InvincibilitySystem::update(rt::ecs::Registry& r, float dt) {
+    // Tick invincibility
+    auto& invs = r.storage<Invincible>().data();
+    for (auto& [e, inv] : invs) {
+        inv.timeLeft -= dt;
+        if (inv.timeLeft <= 0.f) {
+            inv.timeLeft = 0.f;
+        }
+    }
 }
 
 }
