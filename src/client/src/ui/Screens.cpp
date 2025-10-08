@@ -200,6 +200,23 @@ void Screens::drawLeaderboard() {
     titleCentered("Coming soon... Press ESC to go back.", (int)(h * 0.50f), baseFont, RAYWHITE);
 }
 
+void Screens::drawNotEnoughPlayers(ScreenState& screen) {
+    int w = GetScreenWidth();
+    int h = GetScreenHeight();
+    int baseFont = baseFontFromHeight(h);
+
+    titleCentered("Not enough players connected", (int)(h * 0.30f), (int)(h * 0.09f), RAYWHITE);
+    titleCentered("Another player disconnected. You have been returned from the game.", (int)(h * 0.42f), baseFont, LIGHTGRAY);
+
+    int btnWidth = (int)(w * 0.24f);
+    int btnHeight = (int)(h * 0.09f);
+    int x = (w - btnWidth) / 2;
+    int y = (int)(h * 0.60f);
+    if (button({(float)x, (float)y, (float)btnWidth, (float)btnHeight}, "Back to Menu", baseFont, BLACK, LIGHTGRAY, GRAY)) {
+        screen = ScreenState::Menu;
+    }
+}
+
 // --- Minimal gameplay networking and rendering ---
 
 void Screens::ensureNetSetup() {
@@ -302,11 +319,9 @@ void Screens::drawWaiting(ScreenState& screen) {
     pumpNetworkOnce();
 
     if (_serverReturnToMenu) {
-        teardownNet();
-        _connected = false;
-        _entities.clear();
-        _statusMessage = "Not enough players. Returning to menu.";
-        screen = ScreenState::Menu;
+        // Server asked us to return: cleanly leave and show info screen
+        leaveSession();
+        screen = ScreenState::NotEnoughPlayers;
         return;
     }
 
@@ -356,11 +371,9 @@ void Screens::drawGameplay(ScreenState& screen) {
     pumpNetworkOnce();
 
     if (_serverReturnToMenu) {
-        teardownNet();
-        _connected = false;
-        _entities.clear();
-        _statusMessage = "Not enough players. Returning to menu.";
-        screen = ScreenState::Menu;
+        // Server asked us to return: cleanly leave and show info screen
+        leaveSession();
+        screen = ScreenState::NotEnoughPlayers;
         return;
     }
 

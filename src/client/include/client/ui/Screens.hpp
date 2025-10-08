@@ -15,6 +15,7 @@ enum class ScreenState {
     Gameplay,
     Options,
     Leaderboard,
+    NotEnoughPlayers,
     Exiting
 };
 
@@ -37,6 +38,7 @@ public:
     void drawGameplay(ScreenState& screen);
     void drawOptions();
     void drawLeaderboard();
+    void drawNotEnoughPlayers(ScreenState& screen);
     static void logMessage(const std::string& msg, const char* level = "INFO");
     // Gracefully leave any active multiplayer session (sends Disconnect, closes socket)
     void leaveSession();
