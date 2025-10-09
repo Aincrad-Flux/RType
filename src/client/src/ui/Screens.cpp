@@ -35,6 +35,14 @@ void Screens::leaveSession() {
     _serverReturnToMenu = false;
 }
 
+void Screens::leaveSession() {
+    // Gracefully leave any active multiplayer session
+    teardownNet();
+    _connected = false;
+    _entities.clear();
+    _serverReturnToMenu = false;
+}
+
 static int baseFontFromHeight(int h) {
     int baseFont = (int)(h * 0.045f);
     if (baseFont < 16) baseFont = 16;
@@ -512,6 +520,15 @@ void Screens::drawGameplay(ScreenState& screen) {
         return;
     }
     ensureNetSetup();
+
+    pumpNetworkOnce();
+
+    if (_serverReturnToMenu) {
+        // Server asked us to return: cleanly leave and show info screen
+        leaveSession();
+        screen = ScreenState::NotEnoughPlayers;
+        return;
+    }
 
     pumpNetworkOnce();
 
