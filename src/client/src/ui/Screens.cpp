@@ -27,6 +27,14 @@ namespace {
     static constexpr float kEnemyAabbH = 18.0f;
 }
 
+void Screens::leaveSession() {
+    // Gracefully leave any active multiplayer session
+    teardownNet();
+    _connected = false;
+    _entities.clear();
+    _serverReturnToMenu = false;
+}
+
 static int baseFontFromHeight(int h) {
     int baseFont = (int)(h * 0.045f);
     if (baseFont < 16) baseFont = 16;
@@ -119,19 +127,28 @@ void Screens::drawMenu(ScreenState& screen) {
     int gap = (int)(h * 0.02f);
     int startY = (int)(h * 0.30f);
     int x = (w - btnWidth) / 2;
-    if (button({(float)x, (float)startY, (float)btnWidth, (float)btnHeight}, "Singleplayer", baseFont, BLACK, LIGHTGRAY, GRAY)) {
-        screen = ScreenState::Singleplayer;
-    }
+
+    // Disabled button styling (greyed out, no hover effect)
+    Color disText = DARKGRAY;
+    Color disBg = (Color){70, 70, 70, 255};
+    Color disHover = disBg;
+
+    // Singleplayer (disabled)
+    button({(float)x, (float)startY, (float)btnWidth, (float)btnHeight}, "Singleplayer", baseFont, disText, disBg, disHover);
+
+    // Multiplayer (enabled)
     if (button({(float)x, (float)(startY + (btnHeight + gap) * 1), (float)btnWidth, (float)btnHeight}, "Multiplayer", baseFont, BLACK, LIGHTGRAY, GRAY)) {
         screen = ScreenState::Multiplayer;
         _focusedField = 0;
     }
-    if (button({(float)x, (float)(startY + (btnHeight + gap) * 2), (float)btnWidth, (float)btnHeight}, "Options", baseFont, BLACK, LIGHTGRAY, GRAY)) {
-        screen = ScreenState::Options;
-    }
-    if (button({(float)x, (float)(startY + (btnHeight + gap) * 3), (float)btnWidth, (float)btnHeight}, "Leaderboard", baseFont, BLACK, LIGHTGRAY, GRAY)) {
-        screen = ScreenState::Leaderboard;
-    }
+
+    // Options (disabled)
+    button({(float)x, (float)(startY + (btnHeight + gap) * 2), (float)btnWidth, (float)btnHeight}, "Options", baseFont, disText, disBg, disHover);
+
+    // Leaderboard (disabled)
+    button({(float)x, (float)(startY + (btnHeight + gap) * 3), (float)btnWidth, (float)btnHeight}, "Leaderboard", baseFont, disText, disBg, disHover);
+
+    // Quit (enabled)
     if (button({(float)x, (float)(startY + (btnHeight + gap) * 4), (float)btnWidth, (float)btnHeight}, "Quit", baseFont, BLACK, (Color){200, 80, 80, 255}, (Color){230, 120, 120, 255})) {
         screen = ScreenState::Exiting;
     }
@@ -275,6 +292,23 @@ void Screens::drawLeaderboard() {
     titleCentered("Coming soon... Press ESC to go back.", (int)(h * 0.50f), baseFont, RAYWHITE);
 }
 
+void Screens::drawNotEnoughPlayers(ScreenState& screen) {
+    int w = GetScreenWidth();
+    int h = GetScreenHeight();
+    int baseFont = baseFontFromHeight(h);
+
+    titleCentered("Not enough players connected", (int)(h * 0.30f), (int)(h * 0.09f), RAYWHITE);
+    titleCentered("Another player disconnected. You have been returned from the game.", (int)(h * 0.42f), baseFont, LIGHTGRAY);
+
+    int btnWidth = (int)(w * 0.24f);
+    int btnHeight = (int)(h * 0.09f);
+    int x = (w - btnWidth) / 2;
+    int y = (int)(h * 0.60f);
+    if (button({(float)x, (float)y, (float)btnWidth, (float)btnHeight}, "Back to Menu", baseFont, BLACK, LIGHTGRAY, GRAY)) {
+        screen = ScreenState::Menu;
+    }
+}
+
 // --- Minimal gameplay networking and rendering ---
 
 void Screens::ensureNetSetup() {
@@ -285,6 +319,7 @@ void Screens::ensureNetSetup() {
     asio::ip::udp::resolver resolver(*g.io);
     g.server = *resolver.resolve(asio::ip::udp::v4(), _serverAddr, _serverPort).begin();
     g.sock->non_blocking(true);
+    _serverReturnToMenu = false;
     // Re-send Hello on gameplay entry so server registers this endpoint for state
     rtype::net::Header hdr{};
     hdr.version = rtype::net::ProtocolVersion;
@@ -296,8 +331,22 @@ void Screens::ensureNetSetup() {
     g.sock->send_to(asio::buffer(out), g.server);
 }
 
+void Screens::sendDisconnect() {
+    if (!g.sock) return;
+    rtype::net::Header hdr{};
+    hdr.version = rtype::net::ProtocolVersion;
+    hdr.type = rtype::net::MsgType::Disconnect;
+    hdr.size = 0;
+    std::array<char, sizeof(rtype::net::Header)> buf{};
+    std::memcpy(buf.data(), &hdr, sizeof(hdr));
+    asio::error_code ec;
+    g.sock->send_to(asio::buffer(buf), g.server, 0, ec);
+}
+
 void Screens::teardownNet() {
     if (g.sock && g.sock->is_open()) {
+        // Best-effort notify server that we intentionally disconnect
+        sendDisconnect();
         asio::error_code ec; g.sock->close(ec);
     }
     g.sock.reset();
@@ -322,83 +371,84 @@ void Screens::sendInput(std::uint8_t bits) {
 
 void Screens::pumpNetworkOnce() {
     if (!g.sock) return;
-    asio::ip::udp::endpoint from;
-    std::array<char, 8192> in{};
-    asio::error_code ec;
-    std::size_t n = g.sock->receive_from(asio::buffer(in), from, 0, ec);
-    if (ec == asio::error::would_block) return;
-    if (ec || n < sizeof(rtype::net::Header)) return;
-    auto* h = reinterpret_cast<const rtype::net::Header*>(in.data());
-    if (h->version != rtype::net::ProtocolVersion) return;
-    if (h->type == rtype::net::MsgType::State) {
-        const char* p = in.data() + sizeof(rtype::net::Header);
-        if (n < sizeof(rtype::net::Header) + sizeof(rtype::net::StateHeader)) return;
-        auto* sh = reinterpret_cast<const rtype::net::StateHeader*>(p);
-        p += sizeof(rtype::net::StateHeader);
-        std::size_t count = sh->count;
-        if (n < sizeof(rtype::net::Header) + sizeof(rtype::net::StateHeader) + count * sizeof(rtype::net::PackedEntity)) return;
-        _entities.clear();
-        _entities.reserve(count);
-        auto* arr = reinterpret_cast<const rtype::net::PackedEntity*>(p);
-        for (std::size_t i = 0; i < count; ++i) {
-            PackedEntity e{};
-            e.id = arr[i].id;
-            e.type = static_cast<unsigned char>(arr[i].type);
-            e.x = arr[i].x; e.y = arr[i].y; e.vx = arr[i].vx; e.vy = arr[i].vy;
-            e.rgba = arr[i].rgba;
-            _entities.push_back(e);
-        }
-        return;
-    } else if (h->type == rtype::net::MsgType::Roster) {
-        const char* p = in.data() + sizeof(rtype::net::Header);
-        if (n < sizeof(rtype::net::Header) + sizeof(rtype::net::RosterHeader)) return;
-        auto* rh = reinterpret_cast<const rtype::net::RosterHeader*>(p);
-        p += sizeof(rtype::net::RosterHeader);
-        std::size_t count = rh->count;
-        if (n < sizeof(rtype::net::Header) + sizeof(rtype::net::RosterHeader) + count * sizeof(rtype::net::PlayerEntry)) return;
-        _otherPlayers.clear();
-        // Determine truncated username as stored by server (15 chars max)
-        std::string unameTrunc = _username.substr(0, 15);
-        for (std::size_t i = 0; i < count; ++i) {
-            auto* pe = reinterpret_cast<const rtype::net::PlayerEntry*>(p + i * sizeof(rtype::net::PlayerEntry));
-            std::string name(pe->name, pe->name + strnlen(pe->name, sizeof(pe->name)));
-            int lives = std::clamp<int>(pe->lives, 0, 10);
-            if (name == unameTrunc) {
+    // Drain a small batch each frame to avoid backlog bursts
+    for (int i = 0; i < 8; ++i) {
+        asio::ip::udp::endpoint from;
+        std::array<char, 8192> in{};
+        asio::error_code ec;
+        std::size_t n = g.sock->receive_from(asio::buffer(in), from, 0, ec);
+        if (ec == asio::error::would_block) break;
+        if (ec || n < sizeof(rtype::net::Header)) break;
+        const auto* h = reinterpret_cast<const rtype::net::Header*>(in.data());
+        if (h->version != rtype::net::ProtocolVersion) continue;
+
+        if (h->type == rtype::net::MsgType::State) {
+            const char* p = in.data() + sizeof(rtype::net::Header);
+            if (n < sizeof(rtype::net::Header) + sizeof(rtype::net::StateHeader)) continue;
+            auto* sh = reinterpret_cast<const rtype::net::StateHeader*>(p);
+            p += sizeof(rtype::net::StateHeader);
+            std::size_t count = sh->count;
+            if (n < sizeof(rtype::net::Header) + sizeof(rtype::net::StateHeader) + count * sizeof(rtype::net::PackedEntity)) continue;
+            _entities.clear();
+            _entities.reserve(count);
+            auto* arr = reinterpret_cast<const rtype::net::PackedEntity*>(p);
+            for (std::size_t i = 0; i < count; ++i) {
+                PackedEntity e{};
+                e.id = arr[i].id;
+                e.type = static_cast<unsigned char>(arr[i].type);
+                e.x = arr[i].x; e.y = arr[i].y; e.vx = arr[i].vx; e.vy = arr[i].vy;
+                e.rgba = arr[i].rgba;
+                _entities.push_back(e);
+            }
+        } else if (h->type == rtype::net::MsgType::Roster) {
+            const char* p = in.data() + sizeof(rtype::net::Header);
+            if (n < sizeof(rtype::net::Header) + sizeof(rtype::net::RosterHeader)) continue;
+            auto* rh = reinterpret_cast<const rtype::net::RosterHeader*>(p);
+            p += sizeof(rtype::net::RosterHeader);
+            std::size_t count = rh->count;
+            if (n < sizeof(rtype::net::Header) + sizeof(rtype::net::RosterHeader) + count * sizeof(rtype::net::PlayerEntry)) continue;
+            _otherPlayers.clear();
+            // Determine truncated username as stored by server (15 chars max)
+            std::string unameTrunc = _username.substr(0, 15);
+            for (std::size_t i = 0; i < count; ++i) {
+                auto* pe = reinterpret_cast<const rtype::net::PlayerEntry*>(p + i * sizeof(rtype::net::PlayerEntry));
+                std::string name(pe->name, pe->name + strnlen(pe->name, sizeof(pe->name)));
+                int lives = std::clamp<int>(pe->lives, 0, 10);
+                if (name == unameTrunc) {
+                    _playerLives = lives;
+                    _selfId = pe->id;
+                    continue; // don't include self in top bar list
+                }
+                _otherPlayers.push_back({pe->id, name, lives});
+            }
+            // Keep at most 3 teammates in top bar
+            if (_otherPlayers.size() > 3)
+                _otherPlayers.resize(3);
+        } else if (h->type == rtype::net::MsgType::LivesUpdate) {
+            const char* p = in.data() + sizeof(rtype::net::Header);
+            if (n < sizeof(rtype::net::Header) + sizeof(rtype::net::LivesUpdatePayload)) continue;
+            auto* lu = reinterpret_cast<const rtype::net::LivesUpdatePayload*>(p);
+            unsigned id = lu->id;
+            int lives = std::clamp<int>(lu->lives, 0, 10);
+            if (id == _selfId) {
                 _playerLives = lives;
-                _selfId = pe->id;
-                continue; // don't include self in top bar list
+                _gameOver = (_playerLives <= 0);
+            } else {
+                for (auto& op : _otherPlayers) {
+                    if (op.id == id) { op.lives = lives; break; }
+                }
             }
-            _otherPlayers.push_back({pe->id, name, lives});
-        }
-        // Keep at most 3 teammates in top bar
-        if (_otherPlayers.size() > 3)
-            _otherPlayers.resize(3);
-        return;
-    } else if (h->type == rtype::net::MsgType::LivesUpdate) {
-        const char* p = in.data() + sizeof(rtype::net::Header);
-        if (n < sizeof(rtype::net::Header) + sizeof(rtype::net::LivesUpdatePayload)) return;
-        auto* lu = reinterpret_cast<const rtype::net::LivesUpdatePayload*>(p);
-        unsigned id = lu->id;
-        int lives = std::clamp<int>(lu->lives, 0, 10);
-        if (id == _selfId) {
-            _playerLives = lives;
-            _gameOver = (_playerLives <= 0);
-        } else {
-            for (auto& op : _otherPlayers) {
-                if (op.id == id) { op.lives = lives; break; }
-            }
-        }
-        return;
-    } else if (h->type == rtype::net::MsgType::ScoreUpdate) {
-        const char* p = in.data() + sizeof(rtype::net::Header);
-        if (n < sizeof(rtype::net::Header) + sizeof(rtype::net::ScoreUpdatePayload)) return;
-        auto* su = reinterpret_cast<const rtype::net::ScoreUpdatePayload*>(p);
-        if (su->id == _selfId) {
+        } else if (h->type == rtype::net::MsgType::ScoreUpdate) {
+            const char* p = in.data() + sizeof(rtype::net::Header);
+            if (n < sizeof(rtype::net::Header) + sizeof(rtype::net::ScoreUpdatePayload)) continue;
+            auto* su = reinterpret_cast<const rtype::net::ScoreUpdatePayload*>(p);
+            // Team-wide score
             _score = su->score;
+        } else if (h->type == rtype::net::MsgType::ReturnToMenu) {
+            _serverReturnToMenu = true;
+        } else {
+            // ignore unknown types
         }
-        return;
-    } else {
-        return;
     }
 }
 
@@ -412,6 +462,13 @@ void Screens::drawWaiting(ScreenState& screen) {
 
     // Pump one network packet if available to update entities
     pumpNetworkOnce();
+
+    if (_serverReturnToMenu) {
+        // Server asked us to return: cleanly leave and show info screen
+        leaveSession();
+        screen = ScreenState::NotEnoughPlayers;
+        return;
+    }
 
     // Count players in the latest world snapshot
     int playerCount = 0;
@@ -455,6 +512,15 @@ void Screens::drawGameplay(ScreenState& screen) {
         return;
     }
     ensureNetSetup();
+
+    pumpNetworkOnce();
+
+    if (_serverReturnToMenu) {
+        // Server asked us to return: cleanly leave and show info screen
+        leaveSession();
+        screen = ScreenState::NotEnoughPlayers;
+        return;
+    }
 
     // Lazy-load spritesheet
     if (!_sheetLoaded) loadSprites();
@@ -512,6 +578,7 @@ void Screens::drawGameplay(ScreenState& screen) {
         sendInput(bits);
         _lastSend = now;
     }
+
 
     // --- HUD (Top other players + Bottom bar for lives/score/level) ---
     int w = GetScreenWidth();

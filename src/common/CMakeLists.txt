@@ -1,5 +1,5 @@
 add_library(rtype_common
-    Protocol.cpp
+    src/Protocol.cpp
 )
 
 target_include_directories(rtype_common

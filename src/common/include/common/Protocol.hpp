@@ -15,7 +15,10 @@ enum class MsgType : std::uint8_t {
     Pong,
     Roster,     // list of players with names and lives (sent on join/leave)
     LivesUpdate, // notify when a player's lives change
-    ScoreUpdate  // notify when a player's score changes (authoritative)
+    ScoreUpdate, // notify when a player's score changes (authoritative)
+    // New messages
+    Disconnect,     // client -> server: explicit disconnect notice
+    ReturnToMenu    // server -> client: ask client to return to menu (e.g., too few players)
 };
 
 struct Header {

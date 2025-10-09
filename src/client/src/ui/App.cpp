@@ -28,8 +28,13 @@ void App::run() {
         t += dt;
 
         if (IsKeyPressed(KEY_ESCAPE)) {
-            if (_screen == ScreenState::Menu) _screen = ScreenState::Exiting;
-            else _screen = ScreenState::Menu;
+            if (_screen == ScreenState::Menu) {
+                _screen = ScreenState::Exiting;
+            } else {
+                // Leaving current screen back to menu; ensure we leave any active session
+                _screens.leaveSession();
+                _screen = ScreenState::Menu;
+            }
         }
 
         BeginDrawing();
@@ -51,11 +56,15 @@ void App::run() {
                 break;
             case ScreenState::Options: _screens.drawOptions(); break;
             case ScreenState::Leaderboard: _screens.drawLeaderboard(); break;
+            case ScreenState::NotEnoughPlayers: _screens.drawNotEnoughPlayers(_screen); break;
             case ScreenState::Exiting: break;
         }
 
         EndDrawing();
     }
+
+    // On exit, ensure we disconnect cleanly if needed
+    _screens.leaveSession();
 
     CloseWindow();
 }

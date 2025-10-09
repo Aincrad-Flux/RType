@@ -18,6 +18,7 @@ enum class ScreenState {
     Gameplay,
     Options,
     Leaderboard,
+    NotEnoughPlayers,
     Exiting
 };
 
@@ -40,7 +41,10 @@ public:
     void drawGameplay(ScreenState& screen);
     void drawOptions();
     void drawLeaderboard();
+    void drawNotEnoughPlayers(ScreenState& screen);
     static void logMessage(const std::string& msg, const char* level = "INFO");
+    // Gracefully leave any active multiplayer session (sends Disconnect, closes socket)
+    void leaveSession();
     ~Screens();
 private:
     int _focusedField = 0;
@@ -53,11 +57,13 @@ private:
     // lightweight UDP client
     void ensureNetSetup();
     void teardownNet();
+    void sendDisconnect();
     void sendInput(std::uint8_t bits);
     void pumpNetworkOnce();
     struct PackedEntity { unsigned id; unsigned char type; float x; float y; float vx; float vy; unsigned rgba; };
     std::vector<PackedEntity> _entities;
     double _lastSend = 0.0;
+    bool _serverReturnToMenu = false;
     // --- spritesheet handling ---
     void loadSprites();
     void loadEnemySprites();

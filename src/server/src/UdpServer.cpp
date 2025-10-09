@@ -100,14 +100,22 @@ void UdpServer::handlePacket(const asio::ip::udp::endpoint& from, const char* da
         }
         return;
     }
+
+    if (header->type == rtype::net::MsgType::Disconnect) {
+        // Client explicitly disconnects
+        removeClient(key);
+        return;
+    }
 }
 
 void UdpServer::gameLoop() {
     using clock = std::chrono::steady_clock;
     const double tickRate = 60.0;
     const double dt = 1.0 / tickRate;
+    const double stateInterval = 1.0 / std::max(1.0, stateHz_);
     auto next = clock::now();
     float elapsed = 0.f;
+    lastStateSend_ = clock::now();
     reg_.addSystem(std::make_unique<rt::game::InputSystem>());
     reg_.addSystem(std::make_unique<rt::game::ShootingSystem>());
     reg_.addSystem(std::make_unique<rt::game::FormationSystem>(&elapsed));
@@ -161,28 +169,35 @@ void UdpServer::gameLoop() {
             }
         }
 
-        // After systems, sync score deltas from ECS and broadcast
+        // After systems, compute team score (sum of all players) and broadcast if changed
+        std::int32_t teamScore = 0;
         for (auto& [e, inp] : reg_.storage<rt::game::PlayerInput>().data()) {
             (void)inp;
             if (auto* sc = reg_.get<rt::game::Score>(e)) {
-                auto prev = playerScores_[e];
-                if (sc->value != prev) {
-                    playerScores_[e] = sc->value;
-                    // broadcast score update
-                    rtype::net::Header hdr{};
-                    hdr.version = rtype::net::ProtocolVersion;
-                    hdr.type = rtype::net::MsgType::ScoreUpdate;
-                    hdr.size = sizeof(rtype::net::ScoreUpdatePayload);
-                    rtype::net::ScoreUpdatePayload p{ e, sc->value };
-                    std::vector<char> out(sizeof(hdr) + sizeof(p));
-                    std::memcpy(out.data(), &hdr, sizeof(hdr));
-                    std::memcpy(out.data() + sizeof(hdr), &p, sizeof(p));
-                    for (const auto& [_, ep] : keyToEndpoint_) doSend(ep, out.data(), out.size());
-                }
+                playerScores_[e] = sc->value;
+                teamScore += sc->value;
             }
         }
+        if (teamScore != lastTeamScore_) {
+            lastTeamScore_ = teamScore;
+            rtype::net::Header hdr{};
+            hdr.version = rtype::net::ProtocolVersion;
+            hdr.type = rtype::net::MsgType::ScoreUpdate;
+            hdr.size = sizeof(rtype::net::ScoreUpdatePayload);
+            // id field can be 0 for team, client ignores id
+            rtype::net::ScoreUpdatePayload p{ 0, teamScore };
+            std::vector<char> out(sizeof(hdr) + sizeof(p));
+            std::memcpy(out.data(), &hdr, sizeof(hdr));
+            std::memcpy(out.data() + sizeof(hdr), &p, sizeof(p));
+            for (const auto& [_, ep] : keyToEndpoint_) doSend(ep, out.data(), out.size());
+        }
         checkTimeouts();
-        broadcastState();
+        // Throttle world state broadcast to reduce network bursts
+        auto now = clock::now();
+        if (std::chrono::duration<double>(now - lastStateSend_).count() >= stateInterval) {
+            broadcastState();
+            lastStateSend_ = now;
+        }
         std::this_thread::sleep_until(next);
     }
 }
@@ -221,6 +236,14 @@ void UdpServer::removeClient(const std::string& key) {
     // Send roster once to update remaining clients' top bar
     broadcastRoster();
     std::cout << "[server] Removed disconnected client: " << key << "\n";
+
+    // If less than 2 players remain, notify remaining players to return to menu
+    if (endpointToPlayerId_.size() > 0 && endpointToPlayerId_.size() < 2) {
+        rtype::net::Header rtm{0, rtype::net::MsgType::ReturnToMenu, rtype::net::ProtocolVersion};
+        for (auto& [_, ep] : keyToEndpoint_) {
+            doSend(ep, &rtm, sizeof(rtm));
+        }
+    }
 }
 
 void UdpServer::broadcastState() {
@@ -228,8 +251,21 @@ void UdpServer::broadcastState() {
     hdr.version = rtype::net::ProtocolVersion;
     hdr.type = rtype::net::MsgType::State;
     rtype::net::StateHeader sh{};
-    std::vector<rtype::net::PackedEntity> net;
-    net.reserve(512);
+    // Cap packet size to avoid IP fragmentation (~1200 bytes total)
+    constexpr std::size_t kMaxUdpBytes = 1200;
+    constexpr std::size_t kHeaderBytes = sizeof(rtype::net::Header);
+    constexpr std::size_t kStateHdrBytes = sizeof(rtype::net::StateHeader);
+    constexpr std::size_t kEntBytes = sizeof(rtype::net::PackedEntity); // packed (25 bytes)
+    const std::size_t maxEntities = (kMaxUdpBytes > (kHeaderBytes + kStateHdrBytes))
+        ? ((kMaxUdpBytes - (kHeaderBytes + kStateHdrBytes)) / kEntBytes)
+        : 0;
+
+    std::vector<rtype::net::PackedEntity> players;
+    std::vector<rtype::net::PackedEntity> bullets;
+    std::vector<rtype::net::PackedEntity> enemies;
+    players.reserve(16);
+    bullets.reserve(64);
+    enemies.reserve(64);
     auto& types = reg_.storage<rt::game::NetType>().data();
     for (auto& [e, nt] : types) {
         auto* tr = reg_.get<rt::game::Transform>(e);
@@ -242,9 +278,25 @@ void UdpServer::broadcastState() {
         pe.x = tr->x; pe.y = tr->y;
         pe.vx = ve->vx; pe.vy = ve->vy;
         pe.rgba = co->rgba;
-        net.push_back(pe);
-        if (net.size() >= 512) break;
+        switch (nt.type) {
+            case rtype::net::EntityType::Player: players.push_back(pe); break;
+            case rtype::net::EntityType::Bullet: bullets.push_back(pe); break;
+            case rtype::net::EntityType::Enemy: default: enemies.push_back(pe); break;
+        }
     }
+    std::vector<rtype::net::PackedEntity> net;
+    net.reserve(std::min<std::size_t>(players.size() + bullets.size() + enemies.size(), maxEntities));
+    auto appendLimited = [&](const std::vector<rtype::net::PackedEntity>& src) {
+        for (const auto& pe : src) {
+            if (net.size() >= maxEntities) break;
+            net.push_back(pe);
+        }
+    };
+    // Prioritize players, then bullets (for responsiveness), then enemies
+    appendLimited(players);
+    appendLimited(bullets);
+    appendLimited(enemies);
+
     sh.count = static_cast<std::uint16_t>(net.size());
     std::size_t payloadSize = sizeof(rtype::net::StateHeader) + net.size() * sizeof(rtype::net::PackedEntity);
     hdr.size = static_cast<std::uint16_t>(payloadSize);
