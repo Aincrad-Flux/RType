@@ -10,6 +10,8 @@ This document describes the in-server game engine built on an Entity–Component
 
 The ECS registry maintains a mapping of entities to their components, calls systems in order each tick, and supports creation and destruction of entities.
 
+For a quick, visual overview of how systems interact with components and the execution order, see the ECS graph: docs/devlopper/ecs_graph.md
+
 ## Core components (data model)
 
 - Transform: position in 2D space.
