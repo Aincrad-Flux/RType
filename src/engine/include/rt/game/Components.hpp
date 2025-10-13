@@ -32,6 +32,16 @@ struct Shooter {
     float bulletSpeed = 320.f; // px/s for player bullets
 };
 
+// Marker for wide beam bullets that can hit multiple enemies in a single update
+struct BeamTag {};
+
+// Charge shot state for players
+struct ChargeGun {
+    float charge = 0.f;       // current charge seconds
+    float maxCharge = 2.0f;   // cap seconds for full charge
+    bool firing = false;      // set true when a beam should be emitted this tick
+};
+
 // Enemy AI shooter: fires at players with limited accuracy.
 struct EnemyShooter {
     float cooldown = 0.f;       // seconds left until next shot

@@ -39,6 +39,7 @@ enum : std::uint8_t {
     InputLeft  = 1 << 2,
     InputRight = 1 << 3,
     InputShoot = 1 << 4,
+    InputCharge = 1 << 5, // hold to charge special shot
 };
 
 // Simple entity types used for rendering

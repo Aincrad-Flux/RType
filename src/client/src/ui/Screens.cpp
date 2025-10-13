@@ -35,6 +35,13 @@ void Screens::leaveSession() {
     _serverReturnToMenu = false;
 }
 
+bool Screens::assetsAvailable() const {
+    // Try to locate both player and enemy spritesheets
+    std::string p1 = findSpritePath("r-typesheet42.gif");
+    std::string p2 = findSpritePath("r-typesheet19.gif");
+    return !p1.empty() && !p2.empty();
+}
+
 static int baseFontFromHeight(int h) {
     int baseFont = (int)(h * 0.045f);
     if (baseFont < 16) baseFont = 16;
@@ -107,6 +114,15 @@ void Screens::loadEnemySprites() {
 }
 
 Screens::~Screens() {
+    // Destructor: textures should already be unloaded via unloadGraphics() before window closes.
+    // As a safety net, try to unload if the window is still valid.
+    if (IsWindowReady()) {
+        if (_sheetLoaded) { UnloadTexture(_sheet); _sheetLoaded = false; }
+        if (_enemyLoaded) { UnloadTexture(_enemySheet); _enemyLoaded = false; }
+    }
+}
+
+void Screens::unloadGraphics() {
     if (_sheetLoaded) {
         UnloadTexture(_sheet);
         _sheetLoaded = false;
@@ -244,10 +260,15 @@ void Screens::drawMultiplayer(ScreenState& screen, MultiplayerForm& form) {
                     asio::error_code ec;
                     std::size_t n = g.sock->receive_from(asio::buffer(in), from, 0, ec);
                     if (!ec && n >= sizeof(rtype::net::Header)) {
+                        // Process any message so we don't drop roster/state arriving before HelloAck
                         auto* rh = reinterpret_cast<rtype::net::Header*>(in.data());
-                        if (rh->version == rtype::net::ProtocolVersion && rh->type == rtype::net::MsgType::HelloAck) {
-                            ok = true;
-                            break;
+                        if (rh->version == rtype::net::ProtocolVersion) {
+                            if (rh->type == rtype::net::MsgType::HelloAck) {
+                                ok = true;
+                                break;
+                            }
+                            // Feed into normal packet handler (Roster, ScoreUpdate, etc.)
+                            handleNetPacket(in.data(), n);
                         }
                     } else if (ec && ec != asio::error::would_block) {
                         logMessage(std::string("Receive error: ") + ec.message(), "ERROR");
@@ -379,76 +400,80 @@ void Screens::pumpNetworkOnce() {
         std::size_t n = g.sock->receive_from(asio::buffer(in), from, 0, ec);
         if (ec == asio::error::would_block) break;
         if (ec || n < sizeof(rtype::net::Header)) break;
-        const auto* h = reinterpret_cast<const rtype::net::Header*>(in.data());
-        if (h->version != rtype::net::ProtocolVersion) continue;
+        handleNetPacket(in.data(), n);
+    }
+}
 
-        if (h->type == rtype::net::MsgType::State) {
-            const char* p = in.data() + sizeof(rtype::net::Header);
-            if (n < sizeof(rtype::net::Header) + sizeof(rtype::net::StateHeader)) continue;
-            auto* sh = reinterpret_cast<const rtype::net::StateHeader*>(p);
-            p += sizeof(rtype::net::StateHeader);
-            std::size_t count = sh->count;
-            if (n < sizeof(rtype::net::Header) + sizeof(rtype::net::StateHeader) + count * sizeof(rtype::net::PackedEntity)) continue;
-            _entities.clear();
-            _entities.reserve(count);
-            auto* arr = reinterpret_cast<const rtype::net::PackedEntity*>(p);
-            for (std::size_t i = 0; i < count; ++i) {
-                PackedEntity e{};
-                e.id = arr[i].id;
-                e.type = static_cast<unsigned char>(arr[i].type);
-                e.x = arr[i].x; e.y = arr[i].y; e.vx = arr[i].vx; e.vy = arr[i].vy;
-                e.rgba = arr[i].rgba;
-                _entities.push_back(e);
-            }
-        } else if (h->type == rtype::net::MsgType::Roster) {
-            const char* p = in.data() + sizeof(rtype::net::Header);
-            if (n < sizeof(rtype::net::Header) + sizeof(rtype::net::RosterHeader)) continue;
-            auto* rh = reinterpret_cast<const rtype::net::RosterHeader*>(p);
-            p += sizeof(rtype::net::RosterHeader);
-            std::size_t count = rh->count;
-            if (n < sizeof(rtype::net::Header) + sizeof(rtype::net::RosterHeader) + count * sizeof(rtype::net::PlayerEntry)) continue;
-            _otherPlayers.clear();
-            // Determine truncated username as stored by server (15 chars max)
-            std::string unameTrunc = _username.substr(0, 15);
-            for (std::size_t i = 0; i < count; ++i) {
-                auto* pe = reinterpret_cast<const rtype::net::PlayerEntry*>(p + i * sizeof(rtype::net::PlayerEntry));
-                std::string name(pe->name, pe->name + strnlen(pe->name, sizeof(pe->name)));
-                int lives = std::clamp<int>(pe->lives, 0, 10);
-                if (name == unameTrunc) {
-                    _playerLives = lives;
-                    _selfId = pe->id;
-                    continue; // don't include self in top bar list
-                }
-                _otherPlayers.push_back({pe->id, name, lives});
-            }
-            // Keep at most 3 teammates in top bar
-            if (_otherPlayers.size() > 3)
-                _otherPlayers.resize(3);
-        } else if (h->type == rtype::net::MsgType::LivesUpdate) {
-            const char* p = in.data() + sizeof(rtype::net::Header);
-            if (n < sizeof(rtype::net::Header) + sizeof(rtype::net::LivesUpdatePayload)) continue;
-            auto* lu = reinterpret_cast<const rtype::net::LivesUpdatePayload*>(p);
-            unsigned id = lu->id;
-            int lives = std::clamp<int>(lu->lives, 0, 10);
-            if (id == _selfId) {
-                _playerLives = lives;
-                _gameOver = (_playerLives <= 0);
-            } else {
-                for (auto& op : _otherPlayers) {
-                    if (op.id == id) { op.lives = lives; break; }
-                }
-            }
-        } else if (h->type == rtype::net::MsgType::ScoreUpdate) {
-            const char* p = in.data() + sizeof(rtype::net::Header);
-            if (n < sizeof(rtype::net::Header) + sizeof(rtype::net::ScoreUpdatePayload)) continue;
-            auto* su = reinterpret_cast<const rtype::net::ScoreUpdatePayload*>(p);
-            // Team-wide score
-            _score = su->score;
-        } else if (h->type == rtype::net::MsgType::ReturnToMenu) {
-            _serverReturnToMenu = true;
-        } else {
-            // ignore unknown types
+void Screens::handleNetPacket(const char* data, std::size_t n) {
+    if (!data || n < sizeof(rtype::net::Header)) return;
+    const auto* h = reinterpret_cast<const rtype::net::Header*>(data);
+    if (h->version != rtype::net::ProtocolVersion) return;
+    if (h->type == rtype::net::MsgType::State) {
+        const char* p = data + sizeof(rtype::net::Header);
+        if (n < sizeof(rtype::net::Header) + sizeof(rtype::net::StateHeader)) return;
+        auto* sh = reinterpret_cast<const rtype::net::StateHeader*>(p);
+        p += sizeof(rtype::net::StateHeader);
+        std::size_t count = sh->count;
+        if (n < sizeof(rtype::net::Header) + sizeof(rtype::net::StateHeader) + count * sizeof(rtype::net::PackedEntity)) return;
+        _entities.clear();
+        _entities.reserve(count);
+        auto* arr = reinterpret_cast<const rtype::net::PackedEntity*>(p);
+        for (std::size_t i = 0; i < count; ++i) {
+            PackedEntity e{};
+            e.id = arr[i].id;
+            e.type = static_cast<unsigned char>(arr[i].type);
+            e.x = arr[i].x; e.y = arr[i].y; e.vx = arr[i].vx; e.vy = arr[i].vy;
+            e.rgba = arr[i].rgba;
+            _entities.push_back(e);
         }
+    } else if (h->type == rtype::net::MsgType::Roster) {
+        const char* p = data + sizeof(rtype::net::Header);
+        if (n < sizeof(rtype::net::Header) + sizeof(rtype::net::RosterHeader)) return;
+        auto* rh = reinterpret_cast<const rtype::net::RosterHeader*>(p);
+        p += sizeof(rtype::net::RosterHeader);
+        std::size_t count = rh->count;
+        if (n < sizeof(rtype::net::Header) + sizeof(rtype::net::RosterHeader) + count * sizeof(rtype::net::PlayerEntry)) return;
+        _otherPlayers.clear();
+        // Determine truncated username as stored by server (15 chars max)
+        std::string unameTrunc = _username.substr(0, 15);
+        for (std::size_t i = 0; i < count; ++i) {
+            auto* pe = reinterpret_cast<const rtype::net::PlayerEntry*>(p + i * sizeof(rtype::net::PlayerEntry));
+            std::string name(pe->name, pe->name + strnlen(pe->name, sizeof(pe->name)));
+            int lives = std::clamp<int>(pe->lives, 0, 10);
+            if (name == unameTrunc) {
+                _playerLives = lives;
+                _selfId = pe->id;
+                continue; // don't include self in top bar list
+            }
+            _otherPlayers.push_back({pe->id, name, lives});
+        }
+        // Keep at most 3 teammates in top bar
+        if (_otherPlayers.size() > 3)
+            _otherPlayers.resize(3);
+    } else if (h->type == rtype::net::MsgType::LivesUpdate) {
+        const char* p = data + sizeof(rtype::net::Header);
+        if (n < sizeof(rtype::net::Header) + sizeof(rtype::net::LivesUpdatePayload)) return;
+        auto* lu = reinterpret_cast<const rtype::net::LivesUpdatePayload*>(p);
+        unsigned id = lu->id;
+        int lives = std::clamp<int>(lu->lives, 0, 10);
+        if (id == _selfId) {
+            _playerLives = lives;
+            _gameOver = (_playerLives <= 0);
+        } else {
+            for (auto& op : _otherPlayers) {
+                if (op.id == id) { op.lives = lives; break; }
+            }
+        }
+    } else if (h->type == rtype::net::MsgType::ScoreUpdate) {
+        const char* p = data + sizeof(rtype::net::Header);
+        if (n < sizeof(rtype::net::Header) + sizeof(rtype::net::ScoreUpdatePayload)) return;
+        auto* su = reinterpret_cast<const rtype::net::ScoreUpdatePayload*>(p);
+        // Team-wide score
+        _score = su->score;
+    } else if (h->type == rtype::net::MsgType::ReturnToMenu) {
+        _serverReturnToMenu = true;
+    } else {
+        // ignore unknown types
     }
 }
 
@@ -500,13 +525,29 @@ void Screens::drawWaiting(ScreenState& screen) {
         return;
     }
 
-    // Transition to gameplay when at least 2 players are present
+    // Transition to gameplay when at least 2 players are present and assets exist
     if (playerCount >= 2) {
-        screen = ScreenState::Gameplay;
+        if (assetsAvailable()) {
+            screen = ScreenState::Gameplay;
+        } else {
+            titleCentered("Missing spritesheet assets. Place sprites/ and try again.", (int)(h * 0.80f), baseFont, RED);
+        }
     }
 }
 
 void Screens::drawGameplay(ScreenState& screen) {
+    // Do not run gameplay if assets are missing; show message and bounce back to menu on ESC
+    if (!assetsAvailable()) {
+        int h = GetScreenHeight();
+        int baseFont = baseFontFromHeight(h);
+        titleCentered("Spritesheets not found.", (int)(h * 0.40f), (int)(h * 0.08f), RED);
+        titleCentered("Place the sprites/ folder next to the executable then press ESC.", (int)(h * 0.52f), baseFont, RAYWHITE);
+        if (IsKeyPressed(KEY_ESCAPE)) {
+            leaveSession();
+            screen = ScreenState::Menu;
+        }
+        return;
+    }
     if (!_connected) {
         titleCentered("Not connected. Press ESC.", GetScreenHeight()*0.5f, 24, RAYWHITE);
         return;
@@ -538,13 +579,16 @@ void Screens::drawGameplay(ScreenState& screen) {
     // Update world snapshot first so we can gate inputs using current position
     pumpNetworkOnce();
 
-    // Gate player inputs so the player cannot leave the window
+    // Gate player inputs so the player cannot leave the playable area (between top and bottom bars)
     int gw = GetScreenWidth();
     int gh = GetScreenHeight();
     int ghudFont = (int)(gh * 0.045f); if (ghudFont < 16) ghudFont = 16;
     int gmargin = 16;
-    int gTopReserved = 0; // previously reserved HUD; now allow full vertical space like bullets
-    int gBottomBarH = 0;  // no bottom reservation for movement gating
+    int gTopReserved = gmargin + ghudFont + gmargin;
+    int gBottomBarH = std::max((int)(gh * 0.10f), ghudFont + gmargin);
+    int gPlayableMinY = gTopReserved;
+    int gPlayableMaxY = gh - gBottomBarH;
+    if (gPlayableMaxY < gPlayableMinY + 1) gPlayableMaxY = gPlayableMinY + 1;
     // Find self entity
     const PackedEntity* self = nullptr;
     for (const auto& ent : _entities) {
@@ -567,8 +611,8 @@ void Screens::drawGameplay(ScreenState& screen) {
         float dstY = self->y;
         float minX = 0.0f;
         float maxX = (float)gw - drawW;
-        float minY = 0.0f;
-        float maxY = (float)gh - drawH;
+    float minY = (float)gPlayableMinY;
+    float maxY = (float)gPlayableMaxY - drawH;
         if (wantLeft  && dstX > minX) bits |= rtype::net::InputLeft;
         if (wantRight && dstX < maxX) bits |= rtype::net::InputRight;
         if (wantUp    && dstY > minY) bits |= rtype::net::InputUp;
@@ -580,7 +624,35 @@ void Screens::drawGameplay(ScreenState& screen) {
         if (wantUp)    bits |= rtype::net::InputUp;
         if (wantDown)  bits |= rtype::net::InputDown;
     }
-    if (wantShoot) bits |= rtype::net::InputShoot;
+    // Toggle shot mode on Ctrl press (once)
+    if (IsKeyPressed(KEY_LEFT_CONTROL) || IsKeyPressed(KEY_RIGHT_CONTROL)) {
+        _shotMode = (_shotMode == ShotMode::Normal) ? ShotMode::Charge : ShotMode::Normal;
+    }
+    // Charge beam handling: hold Space when in Charge mode (Alt no longer required)
+    bool altDown = false;
+    bool chargeHeld = (_shotMode == ShotMode::Charge) && IsKeyDown(KEY_SPACE);
+    if (chargeHeld) {
+        if (!_isCharging) { _isCharging = true; _chargeStart = GetTime(); }
+    } else {
+        if (_isCharging && IsKeyReleased(KEY_SPACE)) {
+            // Fire beam
+            double chargeDur = std::min(2.0, std::max(0.1, GetTime() - _chargeStart));
+            _beamActive = true;
+            _beamEndTime = GetTime() + 0.25; // beam visible for 250ms
+            // Beam origin at player position
+            float px = self ? self->x : 0.0f;
+            float py = self ? self->y : (float)((gPlayableMinY + gPlayableMaxY) / 2);
+            _beamX = px;
+            _beamY = py;
+            // Thickness scales with charge duration
+            _beamThickness = (float)(8.0 + chargeDur * 22.0); // 8..52 px
+        }
+        _isCharging = false;
+    }
+    // Normal shoot bit only when not charging
+    if (wantShoot && _shotMode == ShotMode::Normal) bits |= rtype::net::InputShoot;
+    // Send charge bit to engine so server handles charge logic when shot mode is Charge
+    if (chargeHeld) bits |= rtype::net::InputCharge;
 
     double now = GetTime();
     if (now - _lastSend > 1.0/30.0) {
@@ -651,15 +723,16 @@ void Screens::drawGameplay(ScreenState& screen) {
     int textY = bottomY + (bottomBarH - hudFont) / 2;
     DrawText(scoreStr.c_str(), scoreX, textY, hudFont, RAYWHITE);
 
-    // Right: Level (Niveau)
-    std::string lvlStr = "Niveau " + std::to_string(_level);
-    int lvlW = MeasureText(lvlStr.c_str(), hudFont);
-    int lvlX = w - margin - lvlW;
-    DrawText(lvlStr.c_str(), lvlX, textY, hudFont, (Color){200, 200, 80, 255});
+    // Right: Shot mode instead of Level
+    const char* modeStr = (_shotMode == ShotMode::Normal) ? "Shot: Normal" : "Shot: Charge";
+    int modeW = MeasureText(modeStr, hudFont);
+    int modeX = w - margin - modeW;
+    DrawText(modeStr, modeX, textY, hudFont, (Color){200, 200, 80, 255});
 
-    // Playable area bounds for drawing (allow full window like bullets)
-    int playableMinY = 0;
-    int playableMaxY = h;
+    // Playable area bounds for drawing: between top bar and bottom bar
+    int playableMinY = topReserved;
+    int playableMaxY = h - bottomBarH;
+    if (playableMaxY < playableMinY + 1) playableMaxY = playableMinY + 1;
 
     if (_entities.empty()) {
         titleCentered("Connecting to game...", (int)(GetScreenHeight()*0.5f), 24, RAYWHITE);
@@ -715,9 +788,13 @@ void Screens::drawGameplay(ScreenState& screen) {
                 const float cropPx = 10.0f;
                 float srcH = _enemyFrameH - cropPx;
                 if (srcH < 1.0f) srcH = 1.0f; // avoid zero/negative height
-                // Draw aligned to server AABB (top-left at e.x/e.y)
+                // Only draw when the enemy AABB is fully inside the playable area to avoid edge pop-in
+                float ex = e.x;
+                float ey = e.y;
+                if (ey < playableMinY || ey + kEnemyAabbH > playableMaxY) continue;
+                if (ex < 0 || ex + kEnemyAabbW > w) continue;
                 Rectangle src{ _enemyFrameW * colIndex, _enemyFrameH * rowIndex, _enemyFrameW, srcH };
-                Rectangle dst{ e.x, e.y, kEnemyAabbW, kEnemyAabbH };
+                Rectangle dst{ ex, ey, kEnemyAabbW, kEnemyAabbH };
                 Vector2 origin{ 0.0f, 0.0f };
                 DrawTexturePro(_enemySheet, src, dst, origin, 0.0f, WHITE);
                 // Removed enemy debug hitbox outline
@@ -726,6 +803,30 @@ void Screens::drawGameplay(ScreenState& screen) {
             }
         } else if (e.type == 3) { // Bullet
             DrawRectangle((int)e.x, (int)e.y, 6, 3, c);
+        }
+    }
+
+    // Draw charged beam if active
+    if (_beamActive) {
+        if (GetTime() > _beamEndTime) {
+            _beamActive = false;
+        } else {
+            // Beam goes to the right across the playable area
+            float bx = _beamX;
+            float by = _beamY;
+            // Clamp vertical beam center to playable band
+            if (by < playableMinY) by = (float)playableMinY;
+            if (by > playableMaxY) by = (float)playableMaxY;
+            float halfT = _beamThickness * 0.5f;
+            float y0 = std::max((float)playableMinY, by - halfT);
+            float y1 = std::min((float)playableMaxY, by + halfT);
+            if (y1 > y0) {
+                // Core
+                DrawRectangle((int)bx, (int)y0, w - (int)bx, (int)(y1 - y0), (Color){120, 200, 255, 220});
+                // Glow borders
+                DrawRectangle((int)bx, (int)(y0 - 4), w - (int)bx, 4, (Color){120, 200, 255, 120});
+                DrawRectangle((int)bx, (int)y1, w - (int)bx, 4, (Color){120, 200, 255, 120});
+            }
         }
     }
 

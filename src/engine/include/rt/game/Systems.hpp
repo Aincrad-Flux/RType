@@ -22,6 +22,12 @@ class ShootingSystem : public rt::ecs::System {
     void update(rt::ecs::Registry& r, float dt) override;
 };
 
+// Processes charge input and spawns a beam entity based on charge duration
+class ChargeShootingSystem : public rt::ecs::System {
+  public:
+    void update(rt::ecs::Registry& r, float dt) override;
+};
+
 // Enemy AI shooting towards players with limited accuracy
 class EnemyShootingSystem : public rt::ecs::System {
   public:
