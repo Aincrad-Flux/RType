@@ -65,6 +65,8 @@ void App::run() {
 
     // On exit, ensure we disconnect cleanly if needed
     _screens.leaveSession();
+    // Release GPU resources before closing window
+    _screens.unloadGraphics();
 
     CloseWindow();
 }

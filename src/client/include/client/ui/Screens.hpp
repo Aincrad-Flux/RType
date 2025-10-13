@@ -45,8 +45,14 @@ public:
     static void logMessage(const std::string& msg, const char* level = "INFO");
     // Gracefully leave any active multiplayer session (sends Disconnect, closes socket)
     void leaveSession();
+    // Release GPU textures (must be called before closing the window)
+    void unloadGraphics();
     ~Screens();
 private:
+    // Check if required sprite assets are available on disk
+    bool assetsAvailable() const;
+    // Parse a single UDP datagram payload according to our protocol and update local state
+    void handleNetPacket(const char* data, std::size_t n);
     int _focusedField = 0;
     std::string _statusMessage;
     // network state for gameplay
@@ -95,6 +101,19 @@ private:
         std::uint32_t _localPlayerId = 0; // received from Roster
         bool _haveLocalId = false;
     bool _gameOver = false; // set when our lives reach 0
+
+    // --- Client-side charge beam (Alt + Space) ---
+    bool _isCharging = false;
+    double _chargeStart = 0.0;
+    bool _beamActive = false;
+    double _beamEndTime = 0.0;
+    float _beamX = 0.0f;        // origin X at release
+    float _beamY = 0.0f;        // center Y at release
+    float _beamThickness = 0.0f; // computed from charge duration
+
+    // --- Shot mode toggle (Normal vs Charge), switched with Ctrl key ---
+    enum class ShotMode { Normal = 0, Charge = 1 };
+    ShotMode _shotMode = ShotMode::Normal;
 };
 
 } // namespace ui
