@@ -57,6 +57,12 @@ class DespawnOutOfBoundsSystem : public rt::ecs::System {
     float minX_, maxX_, minY_, maxY_;
 };
 
+// Ticks invincibility timers on players and clears HitFlag markers
+class InvincibilitySystem : public rt::ecs::System {
+  public:
+    void update(rt::ecs::Registry& r, float dt) override;
+};
+
 // Spawns enemy formations at intervals
 class FormationSpawnSystem : public rt::ecs::System {
   public:

@@ -5,11 +5,14 @@
 #include <memory>
 #include <iostream>
 #include <vector>
+#include <algorithm>
 #include <cstring>
+#include <algorithm>
+#include <thread>
+#include <chrono>
+#include <string>
 #include "common/Protocol.hpp"
-
-namespace client {
-namespace ui {
+using namespace client::ui;
 
 namespace {
     struct UdpClientGlobals {
@@ -17,6 +20,19 @@ namespace {
         std::unique_ptr<asio::ip::udp::socket> sock;
         asio::ip::udp::endpoint server;
     } g;
+    // Scale factor for enemy visual hitbox (only affects the red outline)
+    static constexpr float kEnemyHitboxScale = 1.25f; // 25% larger than sprite bounds
+    // Server-side AABB for small enemies (EntityType 2 default)
+    static constexpr float kEnemyAabbW = 27.0f;
+    static constexpr float kEnemyAabbH = 18.0f;
+}
+
+void Screens::leaveSession() {
+    // Gracefully leave any active multiplayer session
+    teardownNet();
+    _connected = false;
+    _entities.clear();
+    _serverReturnToMenu = false;
 }
 
 static int baseFontFromHeight(int h) {
@@ -33,6 +49,74 @@ void Screens::logMessage(const std::string& msg, const char* level) {
         std::cout << "[INFO] " << msg << std::endl;
 }
 
+// --- Spritesheet helpers ---
+std::string Screens::findSpritePath(const char* name) const {
+    std::vector<std::string> candidates;
+    candidates.emplace_back(std::string("sprites/") + name);
+    candidates.emplace_back(std::string("../../sprites/") + name);
+    candidates.emplace_back(std::string("../sprites/") + name);
+    candidates.emplace_back(std::string("../../../sprites/") + name);
+    for (const auto& c : candidates) {
+        if (FileExists(c.c_str())) return c;
+    }
+    return {};
+}
+
+void Screens::loadSprites() {
+    if (_sheetLoaded) return;
+    std::string path = findSpritePath("r-typesheet42.gif");
+    if (path.empty()) {
+        logMessage("Spritesheet r-typesheet42.gif not found.", "WARN");
+        return;
+    }
+    _sheet = LoadTexture(path.c_str());
+    if (_sheet.id == 0) {
+        logMessage("Failed to load spritesheet texture.", "ERROR");
+        return;
+    }
+    _sheetLoaded = true;
+    _frameW = (float)_sheet.width / (float)_sheetCols;
+    _frameH = (float)_sheet.height / (float)_sheetRows;
+    logMessage("Spritesheet loaded: " + std::to_string(_sheet.width) + "x" + std::to_string(_sheet.height) +
+               ", frame " + std::to_string((int)_frameW) + "x" + std::to_string((int)_frameH), "INFO");
+}
+
+void Screens::loadEnemySprites() {
+    if (_enemyLoaded) return;
+    std::string path = findSpritePath("r-typesheet19.gif");
+    if (path.empty()) {
+        logMessage("Enemy spritesheet r-typesheet19.gif not found.", "WARN");
+        return;
+    }
+    _enemySheet = LoadTexture(path.c_str());
+    if (_enemySheet.id == 0) {
+        logMessage("Failed to load enemy spritesheet texture.", "ERROR");
+        return;
+    }
+    _enemyLoaded = true;
+    // Per user spec: r-typesheet19.gif (230x97) is a 7x3 grid
+    _enemyCols = 7;
+    _enemyRows = 3;
+
+    _enemyFrameW = (float)_enemySheet.width / (float)_enemyCols;
+    _enemyFrameH = (float)_enemySheet.height / (float)_enemyRows;
+    logMessage(
+        "Enemy sheet loaded: " + std::to_string(_enemySheet.width) + "x" + std::to_string(_enemySheet.height) +
+        ", grid " + std::to_string(_enemyCols) + "x" + std::to_string(_enemyRows) +
+        ", frame " + std::to_string((int)_enemyFrameW) + "x" + std::to_string((int)_enemyFrameH), "INFO");
+}
+
+Screens::~Screens() {
+    if (_sheetLoaded) {
+        UnloadTexture(_sheet);
+        _sheetLoaded = false;
+    }
+    if (_enemyLoaded) {
+        UnloadTexture(_enemySheet);
+        _enemyLoaded = false;
+    }
+}
+
 void Screens::drawMenu(ScreenState& screen) {
     int w = GetScreenWidth();
     int h = GetScreenHeight();
@@ -43,19 +127,28 @@ void Screens::drawMenu(ScreenState& screen) {
     int gap = (int)(h * 0.02f);
     int startY = (int)(h * 0.30f);
     int x = (w - btnWidth) / 2;
-    if (button({(float)x, (float)startY, (float)btnWidth, (float)btnHeight}, "Singleplayer", baseFont, BLACK, LIGHTGRAY, GRAY)) {
-        screen = ScreenState::Singleplayer;
-    }
+
+    // Disabled button styling (greyed out, no hover effect)
+    Color disText = DARKGRAY;
+    Color disBg = (Color){70, 70, 70, 255};
+    Color disHover = disBg;
+
+    // Singleplayer (disabled)
+    button({(float)x, (float)startY, (float)btnWidth, (float)btnHeight}, "Singleplayer", baseFont, disText, disBg, disHover);
+
+    // Multiplayer (enabled)
     if (button({(float)x, (float)(startY + (btnHeight + gap) * 1), (float)btnWidth, (float)btnHeight}, "Multiplayer", baseFont, BLACK, LIGHTGRAY, GRAY)) {
         screen = ScreenState::Multiplayer;
         _focusedField = 0;
     }
-    if (button({(float)x, (float)(startY + (btnHeight + gap) * 2), (float)btnWidth, (float)btnHeight}, "Options", baseFont, BLACK, LIGHTGRAY, GRAY)) {
-        screen = ScreenState::Options;
-    }
-    if (button({(float)x, (float)(startY + (btnHeight + gap) * 3), (float)btnWidth, (float)btnHeight}, "Leaderboard", baseFont, BLACK, LIGHTGRAY, GRAY)) {
-        screen = ScreenState::Leaderboard;
-    }
+
+    // Options (disabled)
+    button({(float)x, (float)(startY + (btnHeight + gap) * 2), (float)btnWidth, (float)btnHeight}, "Options", baseFont, disText, disBg, disHover);
+
+    // Leaderboard (disabled)
+    button({(float)x, (float)(startY + (btnHeight + gap) * 3), (float)btnWidth, (float)btnHeight}, "Leaderboard", baseFont, disText, disBg, disHover);
+
+    // Quit (enabled)
     if (button({(float)x, (float)(startY + (btnHeight + gap) * 4), (float)btnWidth, (float)btnHeight}, "Quit", baseFont, BLACK, (Color){200, 80, 80, 255}, (Color){230, 120, 120, 255})) {
         screen = ScreenState::Exiting;
     }
@@ -132,6 +225,11 @@ void Screens::drawMultiplayer(ScreenState& screen, MultiplayerForm& form) {
                 _username = form.username;
                 _serverAddr = form.serverAddress;
                 _serverPort = form.serverPort;
+                // Reset HUD/network-related state before connecting
+                _selfId = 0;
+                _playerLives = 4; // will be updated by Roster/LivesUpdate
+                _gameOver = false;
+                _otherPlayers.clear();
 
                 // Ensure a persistent UDP socket is created and send Hello once
                 teardownNet();
@@ -154,6 +252,8 @@ void Screens::drawMultiplayer(ScreenState& screen, MultiplayerForm& form) {
                     } else if (ec && ec != asio::error::would_block) {
                         logMessage(std::string("Receive error: ") + ec.message(), "ERROR");
                     }
+                    // Avoid busy-waiting to keep UI smooth
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
                 }
                 if (ok) {
                     _statusMessage = std::string("Player Connected.");
@@ -192,6 +292,23 @@ void Screens::drawLeaderboard() {
     titleCentered("Coming soon... Press ESC to go back.", (int)(h * 0.50f), baseFont, RAYWHITE);
 }
 
+void Screens::drawNotEnoughPlayers(ScreenState& screen) {
+    int w = GetScreenWidth();
+    int h = GetScreenHeight();
+    int baseFont = baseFontFromHeight(h);
+
+    titleCentered("Not enough players connected", (int)(h * 0.30f), (int)(h * 0.09f), RAYWHITE);
+    titleCentered("Another player disconnected. You have been returned from the game.", (int)(h * 0.42f), baseFont, LIGHTGRAY);
+
+    int btnWidth = (int)(w * 0.24f);
+    int btnHeight = (int)(h * 0.09f);
+    int x = (w - btnWidth) / 2;
+    int y = (int)(h * 0.60f);
+    if (button({(float)x, (float)y, (float)btnWidth, (float)btnHeight}, "Back to Menu", baseFont, BLACK, LIGHTGRAY, GRAY)) {
+        screen = ScreenState::Menu;
+    }
+}
+
 // --- Minimal gameplay networking and rendering ---
 
 void Screens::ensureNetSetup() {
@@ -202,6 +319,7 @@ void Screens::ensureNetSetup() {
     asio::ip::udp::resolver resolver(*g.io);
     g.server = *resolver.resolve(asio::ip::udp::v4(), _serverAddr, _serverPort).begin();
     g.sock->non_blocking(true);
+    _serverReturnToMenu = false;
     // Re-send Hello on gameplay entry so server registers this endpoint for state
     rtype::net::Header hdr{};
     hdr.version = rtype::net::ProtocolVersion;
@@ -213,12 +331,29 @@ void Screens::ensureNetSetup() {
     g.sock->send_to(asio::buffer(out), g.server);
 }
 
+void Screens::sendDisconnect() {
+    if (!g.sock) return;
+    rtype::net::Header hdr{};
+    hdr.version = rtype::net::ProtocolVersion;
+    hdr.type = rtype::net::MsgType::Disconnect;
+    hdr.size = 0;
+    std::array<char, sizeof(rtype::net::Header)> buf{};
+    std::memcpy(buf.data(), &hdr, sizeof(hdr));
+    asio::error_code ec;
+    g.sock->send_to(asio::buffer(buf), g.server, 0, ec);
+}
+
 void Screens::teardownNet() {
     if (g.sock && g.sock->is_open()) {
+        // Best-effort notify server that we intentionally disconnect
+        sendDisconnect();
         asio::error_code ec; g.sock->close(ec);
     }
     g.sock.reset();
     g.io.reset();
+    // Reset sprite assignments when disconnecting
+    _spriteRowById.clear();
+    _nextSpriteRow = 0;
 }
 
 void Screens::sendInput(std::uint8_t bits) {
@@ -236,30 +371,84 @@ void Screens::sendInput(std::uint8_t bits) {
 
 void Screens::pumpNetworkOnce() {
     if (!g.sock) return;
-    asio::ip::udp::endpoint from;
-    std::array<char, 8192> in{};
-    asio::error_code ec;
-    std::size_t n = g.sock->receive_from(asio::buffer(in), from, 0, ec);
-    if (ec || n < sizeof(rtype::net::Header)) return;
-    auto* h = reinterpret_cast<const rtype::net::Header*>(in.data());
-    if (h->version != rtype::net::ProtocolVersion) return;
-    if (h->type != rtype::net::MsgType::State) return;
-    const char* p = in.data() + sizeof(rtype::net::Header);
-    if (n < sizeof(rtype::net::Header) + sizeof(rtype::net::StateHeader)) return;
-    auto* sh = reinterpret_cast<const rtype::net::StateHeader*>(p);
-    p += sizeof(rtype::net::StateHeader);
-    std::size_t count = sh->count;
-    if (n < sizeof(rtype::net::Header) + sizeof(rtype::net::StateHeader) + count * sizeof(rtype::net::PackedEntity)) return;
-    _entities.clear();
-    _entities.reserve(count);
-    auto* arr = reinterpret_cast<const rtype::net::PackedEntity*>(p);
-    for (std::size_t i = 0; i < count; ++i) {
-        PackedEntity e{};
-        e.id = arr[i].id;
-        e.type = static_cast<unsigned char>(arr[i].type);
-        e.x = arr[i].x; e.y = arr[i].y; e.vx = arr[i].vx; e.vy = arr[i].vy;
-        e.rgba = arr[i].rgba;
-        _entities.push_back(e);
+    // Drain a small batch each frame to avoid backlog bursts
+    for (int i = 0; i < 8; ++i) {
+        asio::ip::udp::endpoint from;
+        std::array<char, 8192> in{};
+        asio::error_code ec;
+        std::size_t n = g.sock->receive_from(asio::buffer(in), from, 0, ec);
+        if (ec == asio::error::would_block) break;
+        if (ec || n < sizeof(rtype::net::Header)) break;
+        const auto* h = reinterpret_cast<const rtype::net::Header*>(in.data());
+        if (h->version != rtype::net::ProtocolVersion) continue;
+
+        if (h->type == rtype::net::MsgType::State) {
+            const char* p = in.data() + sizeof(rtype::net::Header);
+            if (n < sizeof(rtype::net::Header) + sizeof(rtype::net::StateHeader)) continue;
+            auto* sh = reinterpret_cast<const rtype::net::StateHeader*>(p);
+            p += sizeof(rtype::net::StateHeader);
+            std::size_t count = sh->count;
+            if (n < sizeof(rtype::net::Header) + sizeof(rtype::net::StateHeader) + count * sizeof(rtype::net::PackedEntity)) continue;
+            _entities.clear();
+            _entities.reserve(count);
+            auto* arr = reinterpret_cast<const rtype::net::PackedEntity*>(p);
+            for (std::size_t i = 0; i < count; ++i) {
+                PackedEntity e{};
+                e.id = arr[i].id;
+                e.type = static_cast<unsigned char>(arr[i].type);
+                e.x = arr[i].x; e.y = arr[i].y; e.vx = arr[i].vx; e.vy = arr[i].vy;
+                e.rgba = arr[i].rgba;
+                _entities.push_back(e);
+            }
+        } else if (h->type == rtype::net::MsgType::Roster) {
+            const char* p = in.data() + sizeof(rtype::net::Header);
+            if (n < sizeof(rtype::net::Header) + sizeof(rtype::net::RosterHeader)) continue;
+            auto* rh = reinterpret_cast<const rtype::net::RosterHeader*>(p);
+            p += sizeof(rtype::net::RosterHeader);
+            std::size_t count = rh->count;
+            if (n < sizeof(rtype::net::Header) + sizeof(rtype::net::RosterHeader) + count * sizeof(rtype::net::PlayerEntry)) continue;
+            _otherPlayers.clear();
+            // Determine truncated username as stored by server (15 chars max)
+            std::string unameTrunc = _username.substr(0, 15);
+            for (std::size_t i = 0; i < count; ++i) {
+                auto* pe = reinterpret_cast<const rtype::net::PlayerEntry*>(p + i * sizeof(rtype::net::PlayerEntry));
+                std::string name(pe->name, pe->name + strnlen(pe->name, sizeof(pe->name)));
+                int lives = std::clamp<int>(pe->lives, 0, 10);
+                if (name == unameTrunc) {
+                    _playerLives = lives;
+                    _selfId = pe->id;
+                    continue; // don't include self in top bar list
+                }
+                _otherPlayers.push_back({pe->id, name, lives});
+            }
+            // Keep at most 3 teammates in top bar
+            if (_otherPlayers.size() > 3)
+                _otherPlayers.resize(3);
+        } else if (h->type == rtype::net::MsgType::LivesUpdate) {
+            const char* p = in.data() + sizeof(rtype::net::Header);
+            if (n < sizeof(rtype::net::Header) + sizeof(rtype::net::LivesUpdatePayload)) continue;
+            auto* lu = reinterpret_cast<const rtype::net::LivesUpdatePayload*>(p);
+            unsigned id = lu->id;
+            int lives = std::clamp<int>(lu->lives, 0, 10);
+            if (id == _selfId) {
+                _playerLives = lives;
+                _gameOver = (_playerLives <= 0);
+            } else {
+                for (auto& op : _otherPlayers) {
+                    if (op.id == id) { op.lives = lives; break; }
+                }
+            }
+        } else if (h->type == rtype::net::MsgType::ScoreUpdate) {
+            const char* p = in.data() + sizeof(rtype::net::Header);
+            if (n < sizeof(rtype::net::Header) + sizeof(rtype::net::ScoreUpdatePayload)) continue;
+            auto* su = reinterpret_cast<const rtype::net::ScoreUpdatePayload*>(p);
+            // Team-wide score
+            _score = su->score;
+        } else if (h->type == rtype::net::MsgType::ReturnToMenu) {
+            _serverReturnToMenu = true;
+        } else {
+            // ignore unknown types
+        }
     }
 }
 
@@ -273,6 +462,13 @@ void Screens::drawWaiting(ScreenState& screen) {
 
     // Pump one network packet if available to update entities
     pumpNetworkOnce();
+
+    if (_serverReturnToMenu) {
+        // Server asked us to return: cleanly leave and show info screen
+        leaveSession();
+        screen = ScreenState::NotEnoughPlayers;
+        return;
+    }
 
     // Count players in the latest world snapshot
     int playerCount = 0;
@@ -317,13 +513,74 @@ void Screens::drawGameplay(ScreenState& screen) {
     }
     ensureNetSetup();
 
-    // Input bits
+    pumpNetworkOnce();
+
+    if (_serverReturnToMenu) {
+        // Server asked us to return: cleanly leave and show info screen
+        leaveSession();
+        screen = ScreenState::NotEnoughPlayers;
+        return;
+    }
+
+    pumpNetworkOnce();
+
+    if (_serverReturnToMenu) {
+        // Server asked us to return: cleanly leave and show info screen
+        leaveSession();
+        screen = ScreenState::NotEnoughPlayers;
+        return;
+    }
+
+    // Lazy-load spritesheet
+    if (!_sheetLoaded) loadSprites();
+    if (!_enemyLoaded) loadEnemySprites();
+
+    // Update world snapshot first so we can gate inputs using current position
+    pumpNetworkOnce();
+
+    // Gate player inputs so the player cannot leave the window
+    int gw = GetScreenWidth();
+    int gh = GetScreenHeight();
+    int ghudFont = (int)(gh * 0.045f); if (ghudFont < 16) ghudFont = 16;
+    int gmargin = 16;
+    int gTopReserved = 0; // previously reserved HUD; now allow full vertical space like bullets
+    int gBottomBarH = 0;  // no bottom reservation for movement gating
+    // Find self entity
+    const PackedEntity* self = nullptr;
+    for (const auto& ent : _entities) {
+        if (ent.type == 1 && ent.id == _selfId) { self = &ent; break; }
+    }
+    // Build input bits with edge gating
     std::uint8_t bits = 0;
-    if (IsKeyDown(KEY_LEFT))  bits |= rtype::net::InputLeft;
-    if (IsKeyDown(KEY_RIGHT)) bits |= rtype::net::InputRight;
-    if (IsKeyDown(KEY_UP))    bits |= rtype::net::InputUp;
-    if (IsKeyDown(KEY_DOWN))  bits |= rtype::net::InputDown;
-    if (IsKeyDown(KEY_SPACE)) bits |= rtype::net::InputShoot;
+    bool wantLeft  = IsKeyDown(KEY_LEFT);
+    bool wantRight = IsKeyDown(KEY_RIGHT);
+    bool wantUp    = IsKeyDown(KEY_UP);
+    bool wantDown  = IsKeyDown(KEY_DOWN);
+    bool wantShoot = IsKeyDown(KEY_SPACE);
+    if (self) {
+        // Estimate drawn size for the player sprite
+        const float playerScale = 1.18f;
+        float drawW = (_sheetLoaded && _frameW > 0) ? (_frameW * playerScale) : 24.0f;
+        float drawH = (_sheetLoaded && _frameH > 0) ? (_frameH * playerScale) : 14.0f;
+        const float xOffset = -6.0f; // applied at draw time
+        float dstX = self->x + xOffset;
+        float dstY = self->y;
+        float minX = 0.0f;
+        float maxX = (float)gw - drawW;
+        float minY = 0.0f;
+        float maxY = (float)gh - drawH;
+        if (wantLeft  && dstX > minX) bits |= rtype::net::InputLeft;
+        if (wantRight && dstX < maxX) bits |= rtype::net::InputRight;
+        if (wantUp    && dstY > minY) bits |= rtype::net::InputUp;
+        if (wantDown  && dstY < maxY) bits |= rtype::net::InputDown;
+    } else {
+        // Fallback: no gating if we don't know self position yet
+        if (wantLeft)  bits |= rtype::net::InputLeft;
+        if (wantRight) bits |= rtype::net::InputRight;
+        if (wantUp)    bits |= rtype::net::InputUp;
+        if (wantDown)  bits |= rtype::net::InputDown;
+    }
+    if (wantShoot) bits |= rtype::net::InputShoot;
 
     double now = GetTime();
     if (now - _lastSend > 1.0/30.0) {
@@ -331,69 +588,161 @@ void Screens::drawGameplay(ScreenState& screen) {
         _lastSend = now;
     }
 
-    pumpNetworkOnce();
 
-    // --- HUD ---
+    // --- HUD (Top other players + Bottom bar for lives/score/level) ---
     int w = GetScreenWidth();
     int h = GetScreenHeight();
     int hudFont = (int)(h * 0.045f);
     if (hudFont < 16) hudFont = 16;
     int margin = 16;
 
-    // Nom du joueur (en haut à gauche)
-    DrawText(_username.c_str(), margin, margin, hudFont, RAYWHITE);
-
-    // Niveau (Lv) à droite du nom
-    int nameWidth = MeasureText(_username.c_str(), hudFont);
-    int lv = 1; // TODO: remplacer par la vraie valeur du niveau si disponible
-    std::string lvStr = "Lv " + std::to_string(lv);
-    int lvX = margin + nameWidth + 16;
-    DrawText(lvStr.c_str(), lvX, margin, hudFont, (Color){200, 200, 80, 255});
-
-    // Barre de HP sur la même ligne, à droite du lvl
-    float hp = 1.0f; // TODO: remplacer par la vraie valeur de HP (0.0 à 1.0)
-    int lvWidth = MeasureText(lvStr.c_str(), hudFont);
-    int barX = lvX + lvWidth + 32;
-    int barY = margin + hudFont/4;
-    int barH = hudFont/2;
-    int barW = w - barX - margin;
-    if (barW > 0) {
-        DrawRectangle(barX, barY, barW, barH, DARKGRAY);
-        DrawRectangle(barX, barY, (int)(barW * hp), barH, (Color){120, 220, 120, 255});
-        DrawRectangleLines(barX, barY, barW, barH, RAYWHITE);
+    // Top area: show up to 3 teammates (exclude self), capping lives icons to 3
+    int topY = margin;
+    int xCursor = margin;
+    int shown = 0;
+    for (size_t i = 0; i < _otherPlayers.size() && shown < 3; ++i, ++shown) {
+        const auto& op = _otherPlayers[i];
+        // Name
+        DrawText(op.name.c_str(), xCursor, topY, hudFont, RAYWHITE);
+        int nameW = MeasureText(op.name.c_str(), hudFont);
+        xCursor += nameW + 12;
+        // Lives as small red squares (cap to 3)
+        int iconSize = std::max(6, hudFont / 2 - 2);
+        int iconGap  = std::max(3, iconSize / 3);
+        int livesToDraw = std::min(3, std::max(0, op.lives));
+        int iconsW = livesToDraw * iconSize + (livesToDraw > 0 ? (livesToDraw - 1) * iconGap : 0);
+        int iconY = topY + (hudFont - iconSize) / 2;
+        for (int k = 0; k < livesToDraw; ++k) {
+            int ix = xCursor + k * (iconSize + iconGap);
+            DrawRectangle(ix, iconY, iconSize, iconSize, (Color){220, 80, 80, 255});
+        }
+        xCursor += iconsW + 24; // spacing to next player
+    }
+    // If more than 3 teammates, show overflow counter
+    if (_otherPlayers.size() > 3) {
+        std::string more = "x " + std::to_string(_otherPlayers.size() - 3);
+        DrawText(more.c_str(), xCursor, topY, hudFont, LIGHTGRAY);
     }
 
-    // Calculer la zone HUD pour empêcher le joueur de passer dessous
-    int hudBottom = margin + hudFont;
+    // Height reserved by top area (no longer used for clamping player)
+    int topReserved = topY + hudFont + margin;
+
+    // Bottom bar: player's lives (left), score (center), level (right)
+    int bottomBarH = std::max((int)(h * 0.10f), hudFont + margin);
+    int bottomY = h - bottomBarH;
+    DrawRectangle(0, bottomY, w, bottomBarH, (Color){20, 20, 20, 200});
+    DrawRectangleLines(0, bottomY, w, bottomBarH, (Color){60, 60, 60, 255});
+
+    // Left: lives 0..10
+    int iconSize = std::max(10, std::min(18, bottomBarH - margin - 10));
+    int iconGap  = std::max(4, iconSize / 3);
+    int livesToDraw = std::min(10, std::max(0, _playerLives));
+    int iconRowY = bottomY + (bottomBarH - iconSize) / 2;
+    int iconRowX = margin;
+    for (int i = 0; i < 10; ++i) {
+        Color c = (i < livesToDraw) ? (Color){220, 80, 80, 255} : (Color){70, 70, 70, 255};
+        DrawRectangle(iconRowX + i * (iconSize + iconGap), iconRowY, iconSize, iconSize, c);
+    }
+
+    // Center: Score
+    std::string scoreStr = "Score: " + std::to_string(_score);
+    int scoreW = MeasureText(scoreStr.c_str(), hudFont);
+    int scoreX = (w - scoreW) / 2;
+    int textY = bottomY + (bottomBarH - hudFont) / 2;
+    DrawText(scoreStr.c_str(), scoreX, textY, hudFont, RAYWHITE);
+
+    // Right: Level (Niveau)
+    std::string lvlStr = "Niveau " + std::to_string(_level);
+    int lvlW = MeasureText(lvlStr.c_str(), hudFont);
+    int lvlX = w - margin - lvlW;
+    DrawText(lvlStr.c_str(), lvlX, textY, hudFont, (Color){200, 200, 80, 255});
+
+    // Playable area bounds for drawing (allow full window like bullets)
+    int playableMinY = 0;
+    int playableMaxY = h;
 
     if (_entities.empty()) {
         titleCentered("Connecting to game...", (int)(GetScreenHeight()*0.5f), 24, RAYWHITE);
     }
 
-    // Render entities as simple shapes
-    for (auto& e : _entities) {
+    // Render entities using persistent sprite-row assignment per player id
+    for (std::size_t i = 0; i < _entities.size(); ++i) {
+        auto& e = _entities[i];
         Color c = {(unsigned char)((e.rgba>>24)&0xFF),(unsigned char)((e.rgba>>16)&0xFF),(unsigned char)((e.rgba>>8)&0xFF),(unsigned char)(e.rgba&0xFF)};
         if (e.type == 1) { // Player (on applique les contraintes)
-            // Taille du vaisseau
+            // Taille du vaisseau pour le fallback rect
             int shipW = 20, shipH = 12;
-            // Empêcher de passer sous le HUD
-            if (e.y < hudBottom) e.y = (float)hudBottom;
-            // Empêcher de sortir de l'écran
+            // Clamp to full window vertically and horizontally
+            if (e.y < playableMinY) e.y = (float)playableMinY;
+            if (e.y + shipH > playableMaxY) e.y = (float)(playableMaxY - shipH);
             if (e.x < 0) e.x = 0;
             if (e.x + shipW > w) e.x = (float)(w - shipW);
-            if (e.y + shipH > h) e.y = (float)(h - shipH);
-            DrawRectangle((int)e.x, (int)e.y, shipW, shipH, c);
+            // Get or assign a fixed row for this player id
+            int rowIndex;
+            auto it = _spriteRowById.find(e.id);
+            if (it == _spriteRowById.end()) {
+                rowIndex = _nextSpriteRow % _sheetRows;
+                _spriteRowById[e.id] = rowIndex;
+                _nextSpriteRow++;
+            } else {
+                rowIndex = it->second;
+            }
+            if (_sheetLoaded && _frameW > 0 && _frameH > 0) {
+                int colIndex = 2;
+                const float playerScale = 1.18f;
+                float drawW = _frameW * playerScale;
+                float drawH = _frameH * playerScale;
+                // Apply a small left offset and clamp using destination coords
+                const float xOffset = -6.0f;
+                float dstX = e.x + xOffset;
+                float dstY = e.y;
+                if (dstY < playableMinY) dstY = (float)playableMinY;
+                if (dstX < 0) dstX = 0;
+                if (dstX + drawW > w) dstX = (float)(w - drawW);
+                if (dstY + drawH > playableMaxY) dstY = (float)(playableMaxY - drawH);
+                Rectangle src{ _frameW * colIndex, _frameH * rowIndex, _frameW, _frameH };
+                Rectangle dst{ dstX, dstY, drawW, drawH };
+                Vector2 origin{ 0.0f, 0.0f };
+                DrawTexturePro(_sheet, src, dst, origin, 0.0f, WHITE);
+            } else {
+                // No fallback debug rectangle: keep player invisible if sprite isn't available
+            }
         } else if (e.type == 2) { // Enemy
-            // Enemies: clamp to playable vertical area so they don't overlap HUD or go below screen
-            int ew = 18, eh = 12;
-            if (e.y < hudBottom) e.y = (float)hudBottom;
-            if (e.y + eh > h) e.y = (float)(h - eh);
-            DrawRectangle((int)e.x, (int)e.y, ew, eh, c);
+            if (_enemyLoaded && _enemyFrameW > 0 && _enemyFrameH > 0) {
+                // Last row is staggered (quinconce): use fractional column index 3.5 on row 2 (zero-based)
+                const float colIndex = 2.5f; // zero-based fractional column
+                const int rowIndex = 2;      // zero-based last row
+                const float cropPx = 10.0f;
+                float srcH = _enemyFrameH - cropPx;
+                if (srcH < 1.0f) srcH = 1.0f; // avoid zero/negative height
+                // Draw aligned to server AABB (top-left at e.x/e.y)
+                Rectangle src{ _enemyFrameW * colIndex, _enemyFrameH * rowIndex, _enemyFrameW, srcH };
+                Rectangle dst{ e.x, e.y, kEnemyAabbW, kEnemyAabbH };
+                Vector2 origin{ 0.0f, 0.0f };
+                DrawTexturePro(_enemySheet, src, dst, origin, 0.0f, WHITE);
+                // Removed enemy debug hitbox outline
+            } else {
+                // No fallback rectangle for enemies to avoid drawing squares
+            }
         } else if (e.type == 3) { // Bullet
             DrawRectangle((int)e.x, (int)e.y, 6, 3, c);
         }
     }
-}
 
-} // namespace ui
-} // namespace client
+    // Game Over overlay and input to return to menu
+    if (_gameOver) {
+        DrawRectangle(0, 0, w, h, (Color){0, 0, 0, 180});
+        titleCentered("GAME OVER", (int)(h * 0.40f), (int)(h * 0.10f), RED);
+        std::string finalScore = "Score: " + std::to_string(_score);
+        titleCentered(finalScore.c_str(), (int)(h * 0.52f), (int)(h * 0.06f), RAYWHITE);
+        titleCentered("Press ESC to return to menu", (int)(h * 0.62f), (int)(h * 0.04f), LIGHTGRAY);
+        if (IsKeyPressed(KEY_ESCAPE)) {
+            teardownNet();
+            _connected = false;
+            _entities.clear();
+            _gameOver = false;
+            screen = ScreenState::Menu;
+            return;
+        }
+    }
+}

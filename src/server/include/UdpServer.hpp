@@ -6,6 +6,7 @@
 #include <vector>
 #include <random>
 #include <string>
+#include <chrono>
 #include "common/Protocol.hpp"
 #include "rt/ecs/Registry.hpp"
 
@@ -23,6 +24,9 @@ class UdpServer {
     void handlePacket(const asio::ip::udp::endpoint& from, const char* data, std::size_t size);
     void gameLoop();
     void broadcastState();
+  void broadcastRoster();
+  void broadcastLivesUpdate(std::uint32_t id, std::uint8_t lives);
+  void broadcastScoreUpdate(std::uint32_t id, std::int32_t score);
     void checkTimeouts();
     void removeClient(const std::string& key);
 
@@ -33,11 +37,19 @@ class UdpServer {
     std::thread netThread_;
     std::thread gameThread_;
     bool running_ = false;
+  // state broadcast throttle (to reduce network bursts)
+  std::chrono::steady_clock::time_point lastStateSend_{};
+  double stateHz_ = 20.0; // send world state 20 times per second
 
     // gameplay state
     std::unordered_map<std::string, std::uint32_t> endpointToPlayerId_;
     std::unordered_map<std::string, asio::ip::udp::endpoint> keyToEndpoint_;
     std::unordered_map<std::uint32_t, std::uint8_t> playerInputBits_;
+  std::unordered_map<std::uint32_t, std::string> playerNames_;
+  std::unordered_map<std::uint32_t, std::uint8_t> playerLives_; // 0..10
+  std::unordered_map<std::uint32_t, std::int32_t> playerScores_;
+  std::int32_t lastTeamScore_ = 0; // shared score across all players
+  std::chrono::steady_clock::time_point lastRosterSend_{}; // kept if we throttle in future
     // ECS registry holds all entities/components
     rt::ecs::Registry reg_;
     std::mt19937 rng_;

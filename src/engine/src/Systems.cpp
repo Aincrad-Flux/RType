@@ -4,8 +4,7 @@
 #include <limits>
 #include <vector>
 #include "rt/game/Systems.hpp"
-
-namespace rt::game {
+using namespace rt::game;
 
 void InputSystem::update(rt::ecs::Registry& r, float dt) {
     (void)dt;
@@ -59,6 +58,7 @@ void ShootingSystem::update(rt::ecs::Registry& r, float dt) {
             r.emplace<NetType>(b, {static_cast<rtype::net::EntityType>(3)});
             r.emplace<ColorRGBA>(b, {0xFFFF55FFu});
             r.emplace<BulletTag>(b, {BulletFaction::Player});
+            r.emplace<BulletOwner>(b, {e});
             r.emplace<Size>(b, {6.f, 3.f});
         }
     }
@@ -219,7 +219,7 @@ rt::ecs::Entity FormationSpawnSystem::spawnSnake(rt::ecs::Registry& r, float y, 
         r.emplace<NetType>(e, {static_cast<rtype::net::EntityType>(2)});
         r.emplace<ColorRGBA>(e, {0xFF5555FFu});
         r.emplace<EnemyTag>(e, {});
-        r.emplace<Size>(e, {18.f, 12.f});
+        r.emplace<Size>(e, {27.f, 18.f});
         r.emplace<FormationFollower>(e, {origin, static_cast<std::uint16_t>(i), i * 36.f, 0.f});
     }
     return origin;
@@ -237,7 +237,7 @@ rt::ecs::Entity FormationSpawnSystem::spawnLine(rt::ecs::Registry& r, float y, i
     r.emplace<NetType>(e, {static_cast<rtype::net::EntityType>(2)});
         r.emplace<ColorRGBA>(e, {0xE06666FFu});
         r.emplace<EnemyTag>(e, {});
-        r.emplace<Size>(e, {18.f, 12.f});
+        r.emplace<Size>(e, {27.f, 18.f});
         r.emplace<FormationFollower>(e, {origin, static_cast<std::uint16_t>(i), i * 40.f, 0.f});
     }
     return origin;
@@ -257,7 +257,7 @@ rt::ecs::Entity FormationSpawnSystem::spawnGrid(rt::ecs::Registry& r, float y, i
             r.emplace<NetType>(e, {static_cast<rtype::net::EntityType>(2)});
             r.emplace<ColorRGBA>(e, {0xCC4444FFu});
             r.emplace<EnemyTag>(e, {});
-            r.emplace<Size>(e, {18.f, 12.f});
+            r.emplace<Size>(e, {27.f, 18.f});
             r.emplace<FormationFollower>(e, {origin, static_cast<std::uint16_t>(idx), cc * 36.f, rr * 36.f});
         }
     }
@@ -283,7 +283,7 @@ rt::ecs::Entity FormationSpawnSystem::spawnTriangle(rt::ecs::Registry& r, float 
             r.emplace<NetType>(e, {static_cast<rtype::net::EntityType>(2)});
             r.emplace<ColorRGBA>(e, {0xDD7777FFu});
             r.emplace<EnemyTag>(e, {});
-            r.emplace<Size>(e, {18.f, 12.f});
+            r.emplace<Size>(e, {27.f, 18.f});
             r.emplace<FormationFollower>(e, {origin, static_cast<std::uint16_t>(idx++), localX, localY});
         }
     }
@@ -324,7 +324,7 @@ void FormationSpawnSystem::update(rt::ecs::Registry& r, float dt) {
     constexpr float kWorldH = 600.f;
     constexpr float kTopMargin = 56.f;
     constexpr float kBottomMargin = 10.f;
-    constexpr float kEnemyH = 12.f; // default enemy sprite height
+    constexpr float kEnemyH = 18.f; // default enemy sprite height (increased)
     constexpr float kSpacing = 36.f;
     std::uniform_int_distribution<int> pick(0, 4);
     int k = pick(rng_);
@@ -411,17 +411,56 @@ void CollisionSystem::update(rt::ecs::Registry& r, float dt) {
         if (bt->faction == BulletFaction::Player) {
             // hit enemies
             for (auto& [e, _] : r.storage<EnemyTag>().data()) {
-                if (intersects(b, e)) { toDestroy.push_back(b); toDestroy.push_back(e); break; }
+                if (intersects(b, e)) {
+                    // award score to bullet owner if any
+                    if (auto* bo = r.get<BulletOwner>(b)) {
+                        if (auto* sc = r.get<Score>(bo->owner)) {
+                            bool isShooter = r.get<EnemyShooter>(e) != nullptr;
+                            sc->value += isShooter ? 200 : 100;
+                        }
+                    }
+                    toDestroy.push_back(b);
+                    toDestroy.push_back(e);
+                    break;
+                }
             }
         } else {
             // enemy bullets hit players
             for (auto& [e, _] : r.storage<PlayerInput>().data()) {
                 // players have PlayerInput component
-                if (intersects(b, e)) { toDestroy.push_back(b); toDestroy.push_back(e); break; }
+                if (!intersects(b, e)) continue;
+                // If player is currently invincible, ignore this hit (but still destroy bullet)
+                if (auto* inv = r.get<Invincible>(e)) {
+                    if (inv->timeLeft > 0.f) { toDestroy.push_back(b); break; }
+                }
+                // Mark player as hit; server will process lives decrement
+                if (auto* hf = r.get<HitFlag>(e)) {
+                    hf->value = true;
+                } else {
+                    r.emplace<HitFlag>(e, {true});
+                }
+                // Apply a brief invincibility to prevent immediate re-hits
+                if (auto* inv = r.get<Invincible>(e)) {
+                    inv->timeLeft = std::max(inv->timeLeft, 1.0f);
+                } else {
+                    r.emplace<Invincible>(e, {1.0f});
+                }
+                toDestroy.push_back(b);
+                break;
             }
         }
     }
     for (auto e : toDestroy) r.destroy(e);
 }
 
+// Decrement invincibility timers each frame
+void InvincibilitySystem::update(rt::ecs::Registry& r, float dt) {
+    // Tick invincibility
+    auto& invs = r.storage<Invincible>().data();
+    for (auto& [e, inv] : invs) {
+        inv.timeLeft -= dt;
+        if (inv.timeLeft <= 0.f) {
+            inv.timeLeft = 0.f;
+        }
+    }
 }

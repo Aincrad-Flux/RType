@@ -1,5 +1,3 @@
 #include "Registry.hpp"
-
-namespace rt::ecs {
+using namespace rt::ecs;
 // No-op implementation file to keep library structure
-}

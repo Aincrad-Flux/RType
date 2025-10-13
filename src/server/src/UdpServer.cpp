@@ -5,8 +5,7 @@
 #include <chrono>
 #include "rt/game/Components.hpp"
 #include "rt/game/Systems.hpp"
-
-namespace rtype::server {
+using namespace rtype::server;
 
 static std::string makeKey(const asio::ip::udp::endpoint& ep) {
     return ep.address().to_string() + ":" + std::to_string(ep.port());
@@ -66,8 +65,23 @@ void UdpServer::handlePacket(const asio::ip::udp::endpoint& from, const char* da
             reg_.emplace<rt::game::PlayerInput>(e, {0, 150.f});
             reg_.emplace<rt::game::Shooter>(e, {0.f, 0.15f, 320.f});
             reg_.emplace<rt::game::Size>(e, {20.f, 12.f});
+            reg_.emplace<rt::game::Score>(e, {0});
             endpointToPlayerId_[key] = e;
             playerInputBits_[e] = 0;
+            // Default lives
+            playerLives_[e] = 4;
+            playerScores_[e] = 0;
+            // Parse optional username in payload
+            std::string uname;
+            if (payloadSize > 0) {
+                uname.assign(payload, payload + std::min<std::size_t>(payloadSize, 15));
+                // strip trailing nulls/spaces
+                while (!uname.empty() && (uname.back() == '\0' || uname.back() == ' ')) uname.pop_back();
+            }
+            if (uname.empty()) uname = "Player" + std::to_string(e);
+            playerNames_[e] = uname;
+            // Send roster immediately on new join
+            broadcastRoster();
         }
         rtype::net::Header ack{0, rtype::net::MsgType::HelloAck, rtype::net::ProtocolVersion};
         doSend(from, &ack, sizeof(ack));
@@ -86,14 +100,22 @@ void UdpServer::handlePacket(const asio::ip::udp::endpoint& from, const char* da
         }
         return;
     }
+
+    if (header->type == rtype::net::MsgType::Disconnect) {
+        // Client explicitly disconnects
+        removeClient(key);
+        return;
+    }
 }
 
 void UdpServer::gameLoop() {
     using clock = std::chrono::steady_clock;
     const double tickRate = 60.0;
     const double dt = 1.0 / tickRate;
+    const double stateInterval = 1.0 / std::max(1.0, stateHz_);
     auto next = clock::now();
     float elapsed = 0.f;
+    lastStateSend_ = clock::now();
     reg_.addSystem(std::make_unique<rt::game::InputSystem>());
     reg_.addSystem(std::make_unique<rt::game::ShootingSystem>());
     reg_.addSystem(std::make_unique<rt::game::FormationSystem>(&elapsed));
@@ -102,14 +124,80 @@ void UdpServer::gameLoop() {
     reg_.addSystem(std::make_unique<rt::game::DespawnOffscreenSystem>(-50.f));
     reg_.addSystem(std::make_unique<rt::game::DespawnOutOfBoundsSystem>(-50.f, 1000.f, -50.f, 600.f));
     reg_.addSystem(std::make_unique<rt::game::CollisionSystem>());
+    reg_.addSystem(std::make_unique<rt::game::InvincibilitySystem>());
     reg_.addSystem(std::make_unique<rt::game::FormationSpawnSystem>(rng_, &elapsed));
 
     while (running_) {
         next += std::chrono::duration_cast<clock::duration>(std::chrono::duration<double>(dt));
         elapsed += static_cast<float>(dt);
         reg_.update(static_cast<float>(dt));
+        // After systems, handle player hits -> decrement lives and respawn
+        for (auto& [e, inp] : reg_.storage<rt::game::PlayerInput>().data()) {
+            (void)inp;
+            if (auto* hf = reg_.get<rt::game::HitFlag>(e)) {
+                if (hf->value) {
+                    auto lives = playerLives_[e];
+                    if (lives > 0) {
+                        lives = static_cast<std::uint8_t>(lives - 1);
+                        playerLives_[e] = lives;
+                        broadcastLivesUpdate(e, lives);
+                    }
+                    // Respawn player at starting X with preserved Y within bounds
+                    if (auto* t = reg_.get<rt::game::Transform>(e)) {
+                        constexpr float kStartX = 50.f;
+                        constexpr float kWorldH = 600.f;
+                        constexpr float kTopMargin = 56.f;
+                        constexpr float kBottomMargin = 10.f;
+                        float y = t->y;
+                        // Clamp Y to safe region
+                        float maxY = kWorldH - kBottomMargin - 12.f; // approx player height
+                        if (y < kTopMargin) y = kTopMargin;
+                        if (y > maxY) y = maxY;
+                        t->x = kStartX; t->y = y;
+                    }
+                    // Reset velocity
+                    if (auto* v = reg_.get<rt::game::Velocity>(e)) { v->vx = 0.f; v->vy = 0.f; }
+                    // Give a short invincibility if not already
+                    if (auto* inv = reg_.get<rt::game::Invincible>(e)) {
+                        inv->timeLeft = std::max(inv->timeLeft, 1.0f);
+                    } else {
+                        reg_.emplace<rt::game::Invincible>(e, {1.0f});
+                    }
+                    // Clear hit flag for next tick
+                    hf->value = false;
+                }
+            }
+        }
+
+        // After systems, compute team score (sum of all players) and broadcast if changed
+        std::int32_t teamScore = 0;
+        for (auto& [e, inp] : reg_.storage<rt::game::PlayerInput>().data()) {
+            (void)inp;
+            if (auto* sc = reg_.get<rt::game::Score>(e)) {
+                playerScores_[e] = sc->value;
+                teamScore += sc->value;
+            }
+        }
+        if (teamScore != lastTeamScore_) {
+            lastTeamScore_ = teamScore;
+            rtype::net::Header hdr{};
+            hdr.version = rtype::net::ProtocolVersion;
+            hdr.type = rtype::net::MsgType::ScoreUpdate;
+            hdr.size = sizeof(rtype::net::ScoreUpdatePayload);
+            // id field can be 0 for team, client ignores id
+            rtype::net::ScoreUpdatePayload p{ 0, teamScore };
+            std::vector<char> out(sizeof(hdr) + sizeof(p));
+            std::memcpy(out.data(), &hdr, sizeof(hdr));
+            std::memcpy(out.data() + sizeof(hdr), &p, sizeof(p));
+            for (const auto& [_, ep] : keyToEndpoint_) doSend(ep, out.data(), out.size());
+        }
         checkTimeouts();
-        broadcastState();
+        // Throttle world state broadcast to reduce network bursts
+        auto now = clock::now();
+        if (std::chrono::duration<double>(now - lastStateSend_).count() >= stateInterval) {
+            broadcastState();
+            lastStateSend_ = now;
+        }
         std::this_thread::sleep_until(next);
     }
 }
@@ -145,7 +233,17 @@ void UdpServer::removeClient(const std::string& key) {
     std::memcpy(out.data() + sizeof(hdr), &id, sizeof(id));
     for (auto& [_, ep] : keyToEndpoint_)
         doSend(ep, out.data(), out.size());
+    // Send roster once to update remaining clients' top bar
+    broadcastRoster();
     std::cout << "[server] Removed disconnected client: " << key << "\n";
+
+    // If less than 2 players remain, notify remaining players to return to menu
+    if (endpointToPlayerId_.size() > 0 && endpointToPlayerId_.size() < 2) {
+        rtype::net::Header rtm{0, rtype::net::MsgType::ReturnToMenu, rtype::net::ProtocolVersion};
+        for (auto& [_, ep] : keyToEndpoint_) {
+            doSend(ep, &rtm, sizeof(rtm));
+        }
+    }
 }
 
 void UdpServer::broadcastState() {
@@ -153,8 +251,21 @@ void UdpServer::broadcastState() {
     hdr.version = rtype::net::ProtocolVersion;
     hdr.type = rtype::net::MsgType::State;
     rtype::net::StateHeader sh{};
-    std::vector<rtype::net::PackedEntity> net;
-    net.reserve(512);
+    // Cap packet size to avoid IP fragmentation (~1200 bytes total)
+    constexpr std::size_t kMaxUdpBytes = 1200;
+    constexpr std::size_t kHeaderBytes = sizeof(rtype::net::Header);
+    constexpr std::size_t kStateHdrBytes = sizeof(rtype::net::StateHeader);
+    constexpr std::size_t kEntBytes = sizeof(rtype::net::PackedEntity); // packed (25 bytes)
+    const std::size_t maxEntities = (kMaxUdpBytes > (kHeaderBytes + kStateHdrBytes))
+        ? ((kMaxUdpBytes - (kHeaderBytes + kStateHdrBytes)) / kEntBytes)
+        : 0;
+
+    std::vector<rtype::net::PackedEntity> players;
+    std::vector<rtype::net::PackedEntity> bullets;
+    std::vector<rtype::net::PackedEntity> enemies;
+    players.reserve(16);
+    bullets.reserve(64);
+    enemies.reserve(64);
     auto& types = reg_.storage<rt::game::NetType>().data();
     for (auto& [e, nt] : types) {
         auto* tr = reg_.get<rt::game::Transform>(e);
@@ -167,9 +278,25 @@ void UdpServer::broadcastState() {
         pe.x = tr->x; pe.y = tr->y;
         pe.vx = ve->vx; pe.vy = ve->vy;
         pe.rgba = co->rgba;
-        net.push_back(pe);
-        if (net.size() >= 512) break;
+        switch (nt.type) {
+            case rtype::net::EntityType::Player: players.push_back(pe); break;
+            case rtype::net::EntityType::Bullet: bullets.push_back(pe); break;
+            case rtype::net::EntityType::Enemy: default: enemies.push_back(pe); break;
+        }
     }
+    std::vector<rtype::net::PackedEntity> net;
+    net.reserve(std::min<std::size_t>(players.size() + bullets.size() + enemies.size(), maxEntities));
+    auto appendLimited = [&](const std::vector<rtype::net::PackedEntity>& src) {
+        for (const auto& pe : src) {
+            if (net.size() >= maxEntities) break;
+            net.push_back(pe);
+        }
+    };
+    // Prioritize players, then bullets (for responsiveness), then enemies
+    appendLimited(players);
+    appendLimited(bullets);
+    appendLimited(enemies);
+
     sh.count = static_cast<std::uint16_t>(net.size());
     std::size_t payloadSize = sizeof(rtype::net::StateHeader) + net.size() * sizeof(rtype::net::PackedEntity);
     hdr.size = static_cast<std::uint16_t>(payloadSize);
@@ -182,9 +309,55 @@ void UdpServer::broadcastState() {
         doSend(ep, out.data(), out.size());
 }
 
+void UdpServer::broadcastRoster() {
+    // Build roster entries from current endpointToPlayerId_
+    rtype::net::RosterHeader rh{};
+    std::vector<rtype::net::PlayerEntry> entries;
+    entries.reserve(endpointToPlayerId_.size());
+    for (const auto& [key, pid] : endpointToPlayerId_) {
+        rtype::net::PlayerEntry pe{};
+        pe.id = pid;
+    // Clamp lives to 0..10 for network
+    auto itl = playerLives_.find(pid);
+    std::uint8_t lives = (itl != playerLives_.end()) ? itl->second : 0;
+    if (lives > 10) lives = 10;
+    pe.lives = lives;
+        auto itn = playerNames_.find(pid);
+        std::string name = (itn != playerNames_.end()) ? itn->second : (std::string("Player") + std::to_string(pid));
+        // copy up to 15 chars + ensure null-termination
+        std::memset(pe.name, 0, sizeof(pe.name));
+        std::strncpy(pe.name, name.c_str(), sizeof(pe.name) - 1);
+    entries.push_back(pe);
+    }
+    rh.count = static_cast<std::uint8_t>(entries.size());
+    rtype::net::Header hdr{};
+    hdr.version = rtype::net::ProtocolVersion;
+    hdr.type = rtype::net::MsgType::Roster;
+    hdr.size = static_cast<std::uint16_t>(sizeof(rh) + entries.size() * sizeof(rtype::net::PlayerEntry));
+    std::vector<char> out(sizeof(hdr) + hdr.size);
+    std::memcpy(out.data(), &hdr, sizeof(hdr));
+    std::memcpy(out.data() + sizeof(hdr), &rh, sizeof(rh));
+    if (!entries.empty())
+        std::memcpy(out.data() + sizeof(hdr) + sizeof(rh), entries.data(), entries.size() * sizeof(rtype::net::PlayerEntry));
+    for (const auto& [_, ep] : keyToEndpoint_)
+        doSend(ep, out.data(), out.size());
+}
+
+void UdpServer::broadcastLivesUpdate(std::uint32_t id, std::uint8_t lives) {
+    rtype::net::Header hdr{};
+    hdr.version = rtype::net::ProtocolVersion;
+    hdr.type = rtype::net::MsgType::LivesUpdate;
+    hdr.size = sizeof(rtype::net::LivesUpdatePayload);
+    rtype::net::LivesUpdatePayload p{ id, lives };
+    std::vector<char> out(sizeof(hdr) + sizeof(p));
+    std::memcpy(out.data(), &hdr, sizeof(hdr));
+    std::memcpy(out.data() + sizeof(hdr), &p, sizeof(p));
+    for (const auto& [_, ep] : keyToEndpoint_)
+        doSend(ep, out.data(), out.size());
+}
+
 void UdpServer::doSend(const asio::ip::udp::endpoint& to, const void* data, std::size_t size) {
     auto buf = std::make_shared<std::vector<char>>(static_cast<const char*>(data), static_cast<const char*>(data) + size);
     socket_.async_send_to(asio::buffer(*buf), to, [buf](std::error_code, std::size_t) {});
 }
 
-}

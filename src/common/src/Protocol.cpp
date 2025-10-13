@@ -1,5 +1,3 @@
 #include "common/Protocol.hpp"
-
-namespace rtype::net {
+using namespace rtype::net;
 // Intentionally empty for now; placeholder for helpers
-}

@@ -2,6 +2,9 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <unordered_map>
+#include <raylib.h>
+#include <utility>
 
 
 namespace client {
@@ -15,6 +18,7 @@ enum class ScreenState {
     Gameplay,
     Options,
     Leaderboard,
+    NotEnoughPlayers,
     Exiting
 };
 
@@ -37,9 +41,13 @@ public:
     void drawGameplay(ScreenState& screen);
     void drawOptions();
     void drawLeaderboard();
+    void drawNotEnoughPlayers(ScreenState& screen);
     static void logMessage(const std::string& msg, const char* level = "INFO");
+    // Gracefully leave any active multiplayer session (sends Disconnect, closes socket)
+    void leaveSession();
+    ~Screens();
 private:
-    int _focusedField = 0; // 0=user, 1=addr, 2=port
+    int _focusedField = 0;
     std::string _statusMessage;
     // network state for gameplay
     bool _connected = false;
@@ -49,11 +57,44 @@ private:
     // lightweight UDP client
     void ensureNetSetup();
     void teardownNet();
+    void sendDisconnect();
     void sendInput(std::uint8_t bits);
     void pumpNetworkOnce();
     struct PackedEntity { unsigned id; unsigned char type; float x; float y; float vx; float vy; unsigned rgba; };
     std::vector<PackedEntity> _entities;
     double _lastSend = 0.0;
+    bool _serverReturnToMenu = false;
+    // --- spritesheet handling ---
+    void loadSprites();
+    void loadEnemySprites();
+    std::string findSpritePath(const char* name) const;
+    Texture2D _sheet{};
+    bool _sheetLoaded = false;
+    int _sheetCols = 5; // spritesheet is 5x5 per user spec
+    int _sheetRows = 5;
+    float _frameW = 0.f;
+    float _frameH = 0.f;
+    // Enemy spritesheet (r-typesheet19.gif, 230x97)
+    Texture2D _enemySheet{};
+    bool _enemyLoaded = false;
+    int _enemyCols = 7; // per user spec: 7 columns
+    int _enemyRows = 3; // per user spec: 3 rows
+    float _enemyFrameW = 0.f;
+    float _enemyFrameH = 0.f;
+    // Fixed sprite assignment per player id
+    std::unordered_map<unsigned, int> _spriteRowById; // id -> row index
+    int _nextSpriteRow = 0; // next row to assign on first sight
+
+    // --- Gameplay HUD state (placeholders until server data is wired) ---
+    int _playerLives = 4; // 0..10 (updated via Roster/LivesUpdate)
+    unsigned _selfId = 0;  // our player id (from roster)
+    int _score = 0;
+    int _level = 1;
+        struct OtherPlayer { std::uint32_t id; std::string name; int lives; };
+        std::vector<OtherPlayer> _otherPlayers; // show up to 3 then "+ x"
+        std::uint32_t _localPlayerId = 0; // received from Roster
+        bool _haveLocalId = false;
+    bool _gameOver = false; // set when our lives reach 0
 };
 
 } // namespace ui

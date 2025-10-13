@@ -1,10 +1,7 @@
 #include "../../include/client/ui/Widgets.hpp"
 #include <raylib.h>
 
-namespace client {
-namespace ui {
-
-bool button(const Rectangle& bounds, const char* label, int fontSize, Color fg, Color bg, Color hoverBg) {
+bool client::ui::button(const Rectangle& bounds, const char* label, int fontSize, Color fg, Color bg, Color hoverBg) {
     Vector2 mouse = GetMousePosition();
     bool hovered = CheckCollisionPointRec(mouse, bounds);
     Color fill = hovered ? hoverBg : bg;
@@ -16,7 +13,7 @@ bool button(const Rectangle& bounds, const char* label, int fontSize, Color fg, 
     return hovered && IsMouseButtonPressed(MOUSE_LEFT_BUTTON);
 }
 
-bool inputBox(const Rectangle& bounds, const char* label, std::string& text, bool focused, int fontSize, Color fg, Color bg, Color border, bool numericOnly) {
+bool client::ui::inputBox(const Rectangle& bounds, const char* label, std::string& text, bool focused, int fontSize, Color fg, Color bg, Color border, bool numericOnly) {
     DrawRectangleRec(bounds, bg);
     DrawRectangleLinesEx(bounds, 2.0f, focused ? RAYWHITE : border);
     DrawText(label, (int)bounds.x, (int)(bounds.y - fontSize - 6), fontSize, fg);
@@ -46,12 +43,9 @@ bool inputBox(const Rectangle& bounds, const char* label, std::string& text, boo
     return clicked;
 }
 
-void titleCentered(const char* title, int y, int fontSize, Color color) {
+void client::ui::titleCentered(const char* title, int y, int fontSize, Color color) {
     int w = MeasureText(title, fontSize);
     DrawText(title, (GetScreenWidth() - w) / 2, y, fontSize, color);
 }
-
-} // namespace ui
-} // namespace client
 
 

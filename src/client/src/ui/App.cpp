@@ -1,9 +1,7 @@
 #include "../../include/client/ui/App.hpp"
 #include <raylib.h>
 #include <cmath>
-
-namespace client {
-namespace ui {
+using namespace client::ui;
 
 static void drawStarfield(float t) {
     for (int i = 0; i < 300; ++i) {
@@ -30,8 +28,13 @@ void App::run() {
         t += dt;
 
         if (IsKeyPressed(KEY_ESCAPE)) {
-            if (_screen == ScreenState::Menu) _screen = ScreenState::Exiting;
-            else _screen = ScreenState::Menu;
+            if (_screen == ScreenState::Menu) {
+                _screen = ScreenState::Exiting;
+            } else {
+                // Leaving current screen back to menu; ensure we leave any active session
+                _screens.leaveSession();
+                _screen = ScreenState::Menu;
+            }
         }
 
         BeginDrawing();
@@ -45,21 +48,23 @@ void App::run() {
             case ScreenState::Waiting: _screens.drawWaiting(_screen); break;
             case ScreenState::Gameplay:
                 if (!_resizedForGameplay) {
-                    SetWindowSize(screenWidth * 1, screenHeight * 1);
+                    // Slightly increase height to make room for the bottom bar
+                    SetWindowSize(screenWidth, (int)(screenHeight * 1.10f));
                     _resizedForGameplay = true;
                 }
                 _screens.drawGameplay(_screen);
                 break;
             case ScreenState::Options: _screens.drawOptions(); break;
             case ScreenState::Leaderboard: _screens.drawLeaderboard(); break;
+            case ScreenState::NotEnoughPlayers: _screens.drawNotEnoughPlayers(_screen); break;
             case ScreenState::Exiting: break;
         }
 
         EndDrawing();
     }
 
+    // On exit, ensure we disconnect cleanly if needed
+    _screens.leaveSession();
+
     CloseWindow();
 }
-
-} // namespace ui
-} // namespace client
