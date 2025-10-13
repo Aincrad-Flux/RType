@@ -64,6 +64,7 @@ void UdpServer::handlePacket(const asio::ip::udp::endpoint& from, const char* da
             reg_.emplace<rt::game::ColorRGBA>(e, {0x55AAFFFFu});
             reg_.emplace<rt::game::PlayerInput>(e, {0, 150.f});
             reg_.emplace<rt::game::Shooter>(e, {0.f, 0.15f, 320.f});
+            reg_.emplace<rt::game::ChargeGun>(e, {0.f, 2.0f, false});
             reg_.emplace<rt::game::Size>(e, {20.f, 12.f});
             reg_.emplace<rt::game::Score>(e, {0});
             endpointToPlayerId_[key] = e;
@@ -118,6 +119,7 @@ void UdpServer::gameLoop() {
     lastStateSend_ = clock::now();
     reg_.addSystem(std::make_unique<rt::game::InputSystem>());
     reg_.addSystem(std::make_unique<rt::game::ShootingSystem>());
+    reg_.addSystem(std::make_unique<rt::game::ChargeShootingSystem>());
     reg_.addSystem(std::make_unique<rt::game::FormationSystem>(&elapsed));
     reg_.addSystem(std::make_unique<rt::game::MovementSystem>());
     reg_.addSystem(std::make_unique<rt::game::EnemyShootingSystem>(rng_));

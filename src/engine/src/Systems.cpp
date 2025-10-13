@@ -64,6 +64,41 @@ void ShootingSystem::update(rt::ecs::Registry& r, float dt) {
     }
 }
 
+void ChargeShootingSystem::update(rt::ecs::Registry& r, float dt) {
+    (void)dt;
+    constexpr std::uint8_t kCharge = 1 << 5; // must match Protocol InputCharge
+    auto& inputs = r.storage<PlayerInput>().data();
+    for (auto& [e, inp] : inputs) {
+        auto* t = r.get<Transform>(e);
+        if (!t) continue;
+        auto* cg = r.get<ChargeGun>(e);
+        if (!cg) continue; // optional feature per player
+        bool holding = (inp.bits & kCharge) != 0;
+        if (holding) {
+            cg->charge = std::min(cg->maxCharge, cg->charge + dt);
+        } else {
+            if (cg->charge > 0.05f) {
+                // Fire beam once, thickness based on charge
+                float thickness = 8.f + (cg->charge / cg->maxCharge) * 44.f; // 8..52
+                auto b = r.create();
+                float bx = t->x + 10.f; // from player
+                float by = t->y + 6.f;  // centered on player
+                r.emplace<Transform>(b, {bx, by - thickness * 0.5f});
+                // Beam is instant; represent as a wide, slow-moving rectangle that lives one tick
+                r.emplace<Velocity>(b, {600.f, 0.f});
+                r.emplace<NetType>(b, {static_cast<rtype::net::EntityType>(3)});
+                r.emplace<ColorRGBA>(b, {0x77CCFFFFu});
+                r.emplace<BulletTag>(b, {BulletFaction::Player});
+                r.emplace<BulletOwner>(b, {e});
+                r.emplace<Size>(b, {700.f, thickness});
+                r.emplace<BeamTag>(b, {});
+                // Reset charge
+                cg->charge = 0.f;
+            }
+        }
+    }
+}
+
 // Enemy shooting towards nearest player with variable accuracy
 void EnemyShootingSystem::update(rt::ecs::Registry& r, float dt) {
     // Build a list of players
@@ -408,6 +443,7 @@ void CollisionSystem::update(rt::ecs::Registry& r, float dt) {
     for (auto b : bullets) {
         auto* bt = r.get<BulletTag>(b);
         if (!bt) continue;
+        bool isBeam = r.get<BeamTag>(b) != nullptr;
         if (bt->faction == BulletFaction::Player) {
             // hit enemies
             for (auto& [e, _] : r.storage<EnemyTag>().data()) {
@@ -419,9 +455,10 @@ void CollisionSystem::update(rt::ecs::Registry& r, float dt) {
                             sc->value += isShooter ? 200 : 100;
                         }
                     }
-                    toDestroy.push_back(b);
+                    // Beams persist through multiple hits in the same frame; regular bullets are destroyed on first hit
+                    if (!isBeam) toDestroy.push_back(b);
                     toDestroy.push_back(e);
-                    break;
+                    if (!isBeam) break; // stop after first hit for regular bullets
                 }
             }
         } else {

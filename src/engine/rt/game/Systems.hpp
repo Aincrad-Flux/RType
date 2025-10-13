@@ -47,4 +47,10 @@ class FormationSpawnSystem : public rt::ecs::System {
     rt::ecs::Entity spawnTriangle(rt::ecs::Registry& r, float y, int rows);
 };
 
+// Processes charge input and spawns a short-lived beam as an entity to be serialized to clients
+class ChargeShootingSystem : public rt::ecs::System {
+  public:
+    void update(rt::ecs::Registry& r, float dt) override;
+};
+
 }
