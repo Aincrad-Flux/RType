@@ -2,6 +2,8 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <unordered_map>
+#include <raylib.h>
 #include <utility>
 
 
@@ -43,8 +45,9 @@ public:
     static void logMessage(const std::string& msg, const char* level = "INFO");
     // Gracefully leave any active multiplayer session (sends Disconnect, closes socket)
     void leaveSession();
+    ~Screens();
 private:
-    int _focusedField = 0; // 0=user, 1=addr, 2=port
+    int _focusedField = 0;
     std::string _statusMessage;
     // network state for gameplay
     bool _connected = false;
@@ -61,6 +64,26 @@ private:
     std::vector<PackedEntity> _entities;
     double _lastSend = 0.0;
     bool _serverReturnToMenu = false;
+    // --- spritesheet handling ---
+    void loadSprites();
+    void loadEnemySprites();
+    std::string findSpritePath(const char* name) const;
+    Texture2D _sheet{};
+    bool _sheetLoaded = false;
+    int _sheetCols = 5; // spritesheet is 5x5 per user spec
+    int _sheetRows = 5;
+    float _frameW = 0.f;
+    float _frameH = 0.f;
+    // Enemy spritesheet (r-typesheet19.gif, 230x97)
+    Texture2D _enemySheet{};
+    bool _enemyLoaded = false;
+    int _enemyCols = 7; // per user spec: 7 columns
+    int _enemyRows = 3; // per user spec: 3 rows
+    float _enemyFrameW = 0.f;
+    float _enemyFrameH = 0.f;
+    // Fixed sprite assignment per player id
+    std::unordered_map<unsigned, int> _spriteRowById; // id -> row index
+    int _nextSpriteRow = 0; // next row to assign on first sight
 
     // --- Gameplay HUD state (placeholders until server data is wired) ---
     int _playerLives = 4; // 0..10 (updated via Roster/LivesUpdate)
