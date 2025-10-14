@@ -59,10 +59,10 @@ void Screens::logMessage(const std::string& msg, const char* level) {
 // --- Spritesheet helpers ---
 std::string Screens::findSpritePath(const char* name) const {
     std::vector<std::string> candidates;
-    candidates.emplace_back(std::string("sprites/") + name);
-    candidates.emplace_back(std::string("../../sprites/") + name);
-    candidates.emplace_back(std::string("../sprites/") + name);
-    candidates.emplace_back(std::string("../../../sprites/") + name);
+    candidates.emplace_back(std::string("client/sprites/") + name);
+    candidates.emplace_back(std::string("../client/sprites/") + name);
+    candidates.emplace_back(std::string("../../client/sprites/") + name);
+    candidates.emplace_back(std::string("../../../client/sprites/") + name);
     for (const auto& c : candidates) {
         if (FileExists(c.c_str())) return c;
     }
