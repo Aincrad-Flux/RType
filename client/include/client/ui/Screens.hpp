@@ -66,6 +66,8 @@ private:
     void sendDisconnect();
     void sendInput(std::uint8_t bits);
     void pumpNetworkOnce();
+    // Block for a short time waiting for HelloAck on current UDP socket; also feeds other packets
+    bool waitHelloAck(double timeoutSec);
     struct PackedEntity { unsigned id; unsigned char type; float x; float y; float vx; float vy; unsigned rgba; };
     std::vector<PackedEntity> _entities;
     double _lastSend = 0.0;

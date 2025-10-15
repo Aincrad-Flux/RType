@@ -18,5 +18,3 @@ private:
 
 } // namespace ui
 } // namespace client
-
-
