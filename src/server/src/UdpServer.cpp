@@ -80,10 +80,19 @@ void UdpServer::handlePacket(const asio::ip::udp::endpoint& from, const char* da
             }
             if (uname.empty()) uname = "Player" + std::to_string(e);
             playerNames_[e] = uname;
+            // Send roster immediately on new join
             broadcastRoster();
         }
         rtype::net::Header ack{0, rtype::net::MsgType::HelloAck, rtype::net::ProtocolVersion};
         doSend(from, &ack, sizeof(ack));
+
+        // --- IMMEDIATE FIX ---
+        // Ensure all clients get an up-to-date world snapshot right after a new player joins.
+        // This avoids clients waiting indefinitely for periodic state tick to include the new player.
+        broadcastState();
+        lastStateSend_ = std::chrono::steady_clock::now();
+        // --- END FIX ---
+
         return;
     }
 
@@ -104,7 +113,7 @@ void UdpServer::handlePacket(const asio::ip::udp::endpoint& from, const char* da
         }
         return;
     }
-    
+
     if (header->type == rtype::net::MsgType::Disconnect) {
         removeClient(key);
         return;

@@ -50,6 +50,7 @@ enum class EntityType : std::uint8_t {
 };
 
 #pragma pack(push, 1)
+
 struct InputPacket {
     std::uint32_t sequence; // client-side increasing sequence id
     std::uint8_t bits;      // combination of Input* bits
@@ -63,8 +64,8 @@ struct ClientPackage {
     std::uint8_t actionFlags; // reserved for special actions (shoot, charge, etc.)
     float chargeLevel;        // current charge amount (0.0f if unused)
     std::uint32_t pingTime;   // optional timestamp for ping/pong tracking
+    char username[16];        // zero-padded/truncated username (max 15 chars + NUL)
 };
-#pragma pack(pop)
 
 struct PackedEntity {
     std::uint32_t id;
@@ -80,11 +81,9 @@ struct PackedEntity {
 struct StateHeader {
     std::uint16_t count; // number of entities following
 };
-#pragma pack(pop)
 
 // --- Lightweight roster message (player list) ---
 // Payload layout: RosterHeader + count * PlayerEntry
-#pragma pack(push, 1)
 struct RosterHeader {
     std::uint8_t count; // number of PlayerEntry records following
 };
@@ -95,22 +94,19 @@ struct PlayerEntry {
     std::uint8_t lives;   // remaining lives
     char name[16];        // zero-padded/truncated username (max 15 chars + NUL)
 };
-#pragma pack(pop)
 
 // One-off update for a single player's lives change
-#pragma pack(push, 1)
 struct LivesUpdatePayload {
     std::uint32_t id;
     std::uint8_t lives; // new lives value
 };
-#pragma pack(pop)
 
 // One-off update for a single player's score change
-#pragma pack(push, 1)
 struct ScoreUpdatePayload {
     std::uint32_t id;
     std::int32_t score; // new total score
 };
+
 #pragma pack(pop)
 
 }
