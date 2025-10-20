@@ -33,6 +33,8 @@ void Screens::leaveSession() {
     _connected = false;
     _entities.clear();
     _serverReturnToMenu = false;
+    // Stop local singleplayer sandbox if running
+    shutdownSingleplayerWorld();
 }
 
 bool Screens::assetsAvailable() const {
@@ -133,76 +135,9 @@ void Screens::unloadGraphics() {
     }
 }
 
-void Screens::drawMenu(ScreenState& screen) {
-    int w = GetScreenWidth();
-    int h = GetScreenHeight();
-    int baseFont = baseFontFromHeight(h);
-    titleCentered("R-Type", (int)(h * 0.12f), (int)(h * 0.10f), RAYWHITE);
-    int btnWidth = (int)(w * 0.28f);
-    int btnHeight = (int)(h * 0.08f);
-    int gap = (int)(h * 0.02f);
-    int startY = (int)(h * 0.30f);
-    int x = (w - btnWidth) / 2;
+// drawMenu is implemented in screens/Menu.cpp
 
-    // Disabled button styling (greyed out, no hover effect)
-    Color disText = DARKGRAY;
-    Color disBg = (Color){70, 70, 70, 255};
-    Color disHover = disBg;
-
-    // Singleplayer (disabled)
-    button({(float)x, (float)startY, (float)btnWidth, (float)btnHeight}, "Singleplayer", baseFont, disText, disBg, disHover);
-
-    // Multiplayer (enabled)
-    if (button({(float)x, (float)(startY + (btnHeight + gap) * 1), (float)btnWidth, (float)btnHeight}, "Multiplayer", baseFont, BLACK, LIGHTGRAY, GRAY)) {
-        screen = ScreenState::Multiplayer;
-        _focusedField = 0;
-    }
-
-    // Options (disabled)
-    button({(float)x, (float)(startY + (btnHeight + gap) * 2), (float)btnWidth, (float)btnHeight}, "Options", baseFont, disText, disBg, disHover);
-
-    // Leaderboard (disabled)
-    button({(float)x, (float)(startY + (btnHeight + gap) * 3), (float)btnWidth, (float)btnHeight}, "Leaderboard", baseFont, disText, disBg, disHover);
-
-    // Quit (enabled)
-    if (button({(float)x, (float)(startY + (btnHeight + gap) * 4), (float)btnWidth, (float)btnHeight}, "Quit", baseFont, BLACK, (Color){200, 80, 80, 255}, (Color){230, 120, 120, 255})) {
-        screen = ScreenState::Exiting;
-    }
-}
-
-void Screens::drawSingleplayer(ScreenState& screen, SingleplayerForm& form) {
-    int w = GetScreenWidth();
-    int h = GetScreenHeight();
-    int baseFont = baseFontFromHeight(h);
-    titleCentered("Singleplayer", (int)(h * 0.10f), (int)(h * 0.08f), RAYWHITE);
-
-    int formWidth = (int)(w * 0.60f);
-    int boxHeight = (int)(h * 0.08f);
-    int gapY = (int)(h * 0.05f);
-    int startY = (int)(h * 0.28f);
-    int x = (w - formWidth) / 2;
-
-    Rectangle userBox = {(float)x, (float)startY, (float)formWidth, (float)boxHeight};
-    if (inputBox(userBox, "Username", form.username, _focusedField == 0, baseFont, RAYWHITE, (Color){30, 30, 30, 200}, GRAY, false)) _focusedField = 0;
-
-    int btnWidth = (int)(w * 0.20f);
-    int btnHeight = (int)(h * 0.08f);
-    int btnY = (int)(userBox.y + userBox.height + gapY);
-    int btnGap = (int)(w * 0.02f);
-    int btnX = (w - (btnWidth * 2 + btnGap)) / 2;
-    bool canStart = !form.username.empty();
-    Color startBg = canStart ? (Color){120, 200, 120, 255} : (Color){80, 120, 80, 255};
-    Color startHover = canStart ? (Color){150, 230, 150, 255} : (Color){90, 140, 90, 255};
-    if (button({(float)btnX, (float)btnY, (float)btnWidth, (float)btnHeight}, "Start", baseFont, BLACK, startBg, startHover)) {
-        if (canStart) {
-            TraceLog(LOG_INFO, "Starting singleplayer as %s", form.username.c_str());
-            screen = ScreenState::Menu;
-        }
-    }
-    if (button({(float)(btnX + btnWidth + btnGap), (float)btnY, (float)btnWidth, (float)btnHeight}, "Back", baseFont, BLACK, LIGHTGRAY, GRAY)) {
-        screen = ScreenState::Menu;
-    }
-}
+// drawSingleplayer is implemented in screens/Singleplayer.cpp
 
 void Screens::drawMultiplayer(ScreenState& screen, MultiplayerForm& form) {
     int w = GetScreenWidth();

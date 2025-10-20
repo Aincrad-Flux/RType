@@ -16,9 +16,27 @@ class MovementSystem : public rt::ecs::System {
     void update(rt::ecs::Registry& r, float dt) override;
 };
 
+class ShootingSystem : public rt::ecs::System {
+  public:
+    void update(rt::ecs::Registry& r, float dt) override;
+};
+
+class ChargeShootingSystem : public rt::ecs::System {
+  public:
+    void update(rt::ecs::Registry& r, float dt) override;
+};
+
+class EnemyShootingSystem : public rt::ecs::System {
+  public:
+    explicit EnemyShootingSystem(std::mt19937& rng) : rng_(rng) {}
+    void update(rt::ecs::Registry& r, float dt) override;
+  private:
+    std::mt19937& rng_;
+};
+
 class FormationSystem : public rt::ecs::System {
   public:
-    FormationSystem(float* elapsedPtr) : t_(elapsedPtr) {}
+    explicit FormationSystem(float* elapsedPtr) : t_(elapsedPtr) {}
     void update(rt::ecs::Registry& r, float dt) override;
   private:
     float* t_;
@@ -32,6 +50,20 @@ class DespawnOffscreenSystem : public rt::ecs::System {
     float minX_;
 };
 
+class DespawnOutOfBoundsSystem : public rt::ecs::System {
+  public:
+    DespawnOutOfBoundsSystem(float minX, float maxX, float minY, float maxY)
+        : minX_(minX), maxX_(maxX), minY_(minY), maxY_(maxY) {}
+    void update(rt::ecs::Registry& r, float dt) override;
+  private:
+    float minX_, maxX_, minY_, maxY_;
+};
+
+class InvincibilitySystem : public rt::ecs::System {
+  public:
+    void update(rt::ecs::Registry& r, float dt) override;
+};
+
 class FormationSpawnSystem : public rt::ecs::System {
   public:
     FormationSpawnSystem(std::mt19937& rng, float* elapsedPtr)
@@ -41,14 +73,9 @@ class FormationSpawnSystem : public rt::ecs::System {
     std::mt19937& rng_;
     float timer_ = 0.f;
     float* t_;
-    rt::ecs::Entity spawnSnake(rt::ecs::Registry& r, float y, int count);
-    rt::ecs::Entity spawnLine(rt::ecs::Registry& r, float y, int count);
-    rt::ecs::Entity spawnGrid(rt::ecs::Registry& r, float y, int rows, int cols);
-    rt::ecs::Entity spawnTriangle(rt::ecs::Registry& r, float y, int rows);
 };
 
-// Processes charge input and spawns a short-lived beam as an entity to be serialized to clients
-class ChargeShootingSystem : public rt::ecs::System {
+class CollisionSystem : public rt::ecs::System {
   public:
     void update(rt::ecs::Registry& r, float dt) override;
 };

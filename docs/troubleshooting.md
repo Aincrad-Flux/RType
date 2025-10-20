@@ -2,19 +2,20 @@
 
 ## Conan/CMake errors
 
-Symptom: `conan_toolchain.cmake not found`.
-- Cause: Setup not executed.
-- Fix: `make setup` (ou `sudo make setup-sudo`). Ensuite `make build`.
+Symptôme: `conan_toolchain.cmake not found`.
+- Cause: l'étape Conan n'a pas été exécutée pour ce type de build (Release/Debug).
+- Correction: `conan install . -of=build -s build_type=Release --build=missing` (ou Debug),
+  puis `cmake --preset conan-release` et `cmake --build --preset conan-release`.
 
-Symptom: Échec d’installation de paquets systèmes.
-- Cause: Permissions requises.
-- Fix: `sudo make setup-sudo`.
+Symptôme: Échec d’installation de paquets systèmes.
+- Cause: permissions requises par le gestionnaire de paquets système.
+- Correction: relancez `conan install` avec les droits requis (éventuellement via `sudo`).
 
 ## Build C++ errors
 
-Symptom: erreurs C++20 ou headers manquants.
+Symptôme: erreurs C++20 ou headers manquants.
 - Vérifiez la version du compilateur (`g++ --version`/`clang --version`).
-- Nettoyez et reconstruisez: `make re`.
+- Nettoyez et reconstruisez: supprimez `build/` puis refaites `conan install` + `cmake --preset` + `cmake --build`.
 
 ## Raylib/display
 

@@ -1,7 +1,7 @@
 # FAQ
 
 ## Comment construire le projet ?
-Voir `docs/setup.md` et utilisez `make build`. Conan téléchargera raylib et asio automatiquement.
+Voir `docs/setup.md` et suivez le flux Conan + CMake (`conan install`, puis `cmake --preset` et `cmake --build`). Conan téléchargera raylib et asio automatiquement.
 
 ## Comment lancer le serveur et le client ?
 `make run-server` (port 4242) puis `make run-client`. Dans le client, renseignez 127.0.0.1:4242 en Multijoueur.

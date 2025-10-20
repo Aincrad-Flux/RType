@@ -3,8 +3,17 @@
 #include <vector>
 #include <cstdint>
 #include <unordered_map>
+#include <memory>
 #include <raylib.h>
 #include <utility>
+
+// ECS Engine (standalone) headers for local singleplayer test
+#include "rt/ecs/Registry.hpp"
+#include "rt/components/Position.hpp"
+#include "rt/components/Velocity.hpp"
+#include "rt/components/Controller.hpp"
+#include "rt/systems/PlayerControlSystem.hpp"
+#include "rt/systems/MovementSystem.hpp"
 
 
 namespace client {
@@ -49,6 +58,18 @@ public:
     void unloadGraphics();
     ~Screens();
 private:
+    // --- Local Singleplayer test (engine sandbox) ---
+    void initSingleplayerWorld();
+    void shutdownSingleplayerWorld();
+    void updateSingleplayerWorld(float dt);
+    void drawSingleplayerWorld();
+    bool _singleplayerActive = false;
+    bool _spPaused = false;
+    std::unique_ptr<rt::ecs::Registry> _spWorld;
+    rt::ecs::Entity _spPlayer = 0;
+    // We keep systems owned by the world; stored here for clarity
+    bool _spInitialized = false;
+
     // Check if required sprite assets are available on disk
     bool assetsAvailable() const;
     // Parse a single UDP datagram payload according to our protocol and update local state

@@ -19,9 +19,14 @@ class ComponentStorage : public IStorage {
         auto it = data_.find(e);
         return it == data_.end() ? nullptr : &it->second;
     }
+    const C* get(Entity e) const {
+        auto it = data_.find(e);
+        return it == data_.end() ? nullptr : &it->second;
+    }
     C& emplace(Entity e, const C& c = C{}) { return data_[e] = c; }
     void remove(Entity e) override { data_.erase(e); }
     std::unordered_map<Entity, C>& data() { return data_; }
+    const std::unordered_map<Entity, C>& data() const { return data_; }
   private:
     std::unordered_map<Entity, C> data_;
 };

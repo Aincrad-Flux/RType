@@ -4,20 +4,22 @@ This guide explains how to run the server and client, and what to expect.
 
 ## Quick start
 
-1) Build:
+1) Install deps and configure (Release shown):
 ```bash
-make build
+conan install . -of=build -s build_type=Release --build=missing
+cmake --preset conan-release
+cmake --build --preset conan-release
 ```
 
 2) Start the server (default UDP port 4242):
 ```bash
-make run-server
+./build/Release/bin/r-type_server 4242
 ```
 The server prints the detected IP and the port. Keep it running.
 
 3) Start the client:
 ```bash
-make run-client
+./build/Release/bin/r-type_client
 ```
 
 4) In the client, choose Multiplayer and enter:
@@ -51,14 +53,17 @@ For binary message details, see `docs/protocol.md`.
 ## Common commands
 
 ```bash
-make setup        # install deps via conan
-make build        # build all targets
-make build-server # build only server
-make build-client # build only client
-make run-server   # run server (4242)
-make run-client   # run client
-make clean        # remove build/
-make re           # clean and rebuild
+conan install . -of=build -s build_type=Release --build=missing
+cmake --preset conan-release
+cmake --build --preset conan-release
+
+# Build specific targets
+cmake --build --preset conan-release --target r-type_server
+cmake --build --preset conan-release --target r-type_client
+
+# Run
+./build/Release/bin/r-type_server 4242
+./build/Release/bin/r-type_client
 ```
 
 ## Notes
