@@ -35,45 +35,39 @@ No manual install is required in most cases. On Linux, some system packages may 
 
 ## First-time setup
 
-```bash
-make setup           # installs Conan deps and generates toolchain files
-# If it fails due to permissions on system packages:
-sudo make setup-sudo
-```
+Generate Conan toolchain + dependencies (choose a build type):
 
-Notes:
-- The Makefile calls `conan install` into `build/`, producing `conan_toolchain.cmake` and CMakeDeps.
-- Preset is controlled via PRESET=Release|Debug (default Release).
+```bash
+# Release
+conan install . -of=build -s build_type=Release --build=missing
+
+# Or Debug
+# conan install . -of=build -s build_type=Debug --build=missing
+```
 
 ## Configure and build
 
-Build everything:
+Configure and build using CMake presets that reference the Conan toolchain:
 
 ```bash
-make build           # runs setup + configure + build
+cmake --preset conan-release    # or conan-debug
+cmake --build --preset conan-release
 ```
 
-Or build specific targets:
-
-```bash
-make build-server    # only r-type_server
-make build-client    # only r-type_client
-```
-
-Artifacts are placed in `build/bin/` and also copied to project root as convenience binaries: `./r-type_server`, `./r-type_client`.
+Artifacts are placed in `build/Release/bin/` (or `build/Debug/bin/`).
 
 ## Run
 
 Server (UDP, port 4242 by default):
 
 ```bash
-make run-server      # equivalent to build/bin/r-type_server 4242
+./build/Release/bin/r-type_server 4242
 ```
 
 Client (raylib window):
 
 ```bash
-make run-client
+./build/Release/bin/r-type_client
 ```
 
 Then, in the client Multiplayer screen, enter the server IP and port (e.g., 127.0.0.1:4242) and connect.

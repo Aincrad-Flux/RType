@@ -5,7 +5,7 @@ using namespace client::ui;
 
 static void drawStarfield(float t) {
     for (int i = 0; i < 300; ++i) {
-        float x = fmodf((i * 73 + t * 60), (float)GetScreenWidth());
+        float x = std::fmod((i * 73 + t * 60), (float)GetScreenWidth());
         float y = (i * 37) % GetScreenHeight();
         DrawPixel((int)x, (int)y, (i % 7 == 0) ? RAYWHITE : DARKGRAY);
     }

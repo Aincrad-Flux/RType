@@ -1,13 +1,32 @@
 add_executable(r-type_client
         src/main.cpp
-        src/ui/App.cpp
-        src/ui/Widgets.cpp
-        src/ui/Screens.cpp
+    src/ui/App.cpp
+    # widgets
+    src/ui/widgets/Button.cpp
+    src/ui/widgets/InputBox.cpp
+    src/ui/widgets/Title.cpp
+    # screens
+    src/ui/screens/Menu.cpp
+    src/ui/screens/Singleplayer.cpp
+    src/ui/screens/Multiplayer.cpp
+    src/ui/screens/Waiting.cpp
+    src/ui/screens/Options.cpp
+    src/ui/screens/Leaderboard.cpp
+    src/ui/screens/NotEnoughPlayers.cpp
+    src/ui/screens/Gameplay.cpp
+    # non-UI modules
+    src/assets/Assets.cpp
+    src/net/Net.cpp
+    src/net/NetPackets.cpp
+    src/utils/Utils.cpp
 )
 
-target_include_directories(r-type_client PRIVATE
+target_include_directories(r-type_client
+    PRIVATE
         .
-        include
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/include/client/ui
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
 find_package(raylib REQUIRED)

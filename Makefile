@@ -47,6 +47,8 @@ help:
 	echo ""; \
 	echo "If setup fails with permission errors, run: sudo make setup-sudo";
 
+CONFIGURE_OPTS ?=
+
 configure:
 	@toolchain_file=$$(find $(BUILD_DIR) -name conan_toolchain.cmake -print -quit); \
 	if [ -z "$$toolchain_file" ]; then \
@@ -54,14 +56,16 @@ configure:
 		exit 1; \
 	fi; \
 	echo "[INFO] Using toolchain: $$toolchain_file"; \
-	$(CMAKE) -S . -B $(BUILD_DIR) -DCMAKE_BUILD_TYPE=$(PRESET) -DCMAKE_TOOLCHAIN_FILE=$$toolchain_file
+	$(CMAKE) -S . -B $(BUILD_DIR) -DCMAKE_BUILD_TYPE=$(PRESET) -DCMAKE_TOOLCHAIN_FILE=$$toolchain_file $(CONFIGURE_OPTS)
 
 build: setup configure
 	$(CMAKE) --build $(BUILD_DIR) --config $(PRESET)
 
+build-client: CONFIGURE_OPTS+=-DBUILD_CLIENT=ON -DBUILD_SERVER=OFF
 build-client: setup configure
 	$(CMAKE) --build $(BUILD_DIR) --config $(PRESET) --target r-type_client
 
+build-server: CONFIGURE_OPTS+=-DBUILD_CLIENT=OFF -DBUILD_SERVER=ON
 build-server: setup configure
 	$(CMAKE) --build $(BUILD_DIR) --config $(PRESET) --target r-type_server
 
