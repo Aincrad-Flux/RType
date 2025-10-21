@@ -14,10 +14,14 @@ add_library(rtype_engine
     src/components/Controller.cpp
     src/components/AiController.cpp
     src/components/Enemy.cpp
+    src/components/Player.cpp
+    src/components/Size.cpp
+    src/components/Collided.cpp
     # Systems
     src/systems/MovementSystem.cpp
     src/systems/PlayerControlSystem.cpp
     src/systems/AiControlSystem.cpp
+    src/systems/CollisionSystem.cpp
     # Legacy compatibility for server (rt::game API)
     src/game_compat_Systems.cpp
 )
