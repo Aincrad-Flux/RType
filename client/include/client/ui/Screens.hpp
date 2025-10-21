@@ -13,11 +13,15 @@
 #include "rt/components/Position.hpp"
 #include "rt/components/Velocity.hpp"
 #include "rt/components/Controller.hpp"
+#include "rt/components/Player.hpp"
+#include "rt/components/Size.hpp"
+#include "rt/components/Collided.hpp"
 #include "rt/components/AiController.hpp"
 #include "rt/components/Enemy.hpp"
 #include "rt/systems/PlayerControlSystem.hpp"
 #include "rt/systems/MovementSystem.hpp"
 #include "rt/systems/AiControlSystem.hpp"
+#include "rt/systems/CollisionSystem.hpp"
 
 
 namespace client {
@@ -92,6 +96,8 @@ private:
         float localY{0.f};       // initial local Y within formation
     };
     std::vector<SpEnemy> _spEnemies;
+    struct SpBullet { float x; float y; float vx; float vy; float w; float h; };
+    std::vector<SpBullet> _spBullets;
     float _spElapsed = 0.f;
     float _spSpawnTimer = 0.f;
     int _spNextFormation = 0;
@@ -101,6 +107,19 @@ private:
     float _spMinSpawnDelay = 1.8f;
     float _spMaxSpawnDelay = 3.6f;
     std::size_t _spEnemyCap = 40; // maximum active enemies in sandbox
+    // Shooting config
+    float _spShootCooldown = 0.f;
+    float _spShootInterval = 0.18f;
+    float _spBulletSpeed = 420.f;
+    float _spBulletW = 8.f;
+    float _spBulletH = 3.f;
+    // Player hit cooldown (i-frames)
+    float _spHitIframes = 1.f;      // seconds left of invincibility
+    float _spHitIframesDuration = 1.0f;
+    // Overheat mechanic (center bar): drains while holding fire, locks shooting at 0, recovers when not firing
+    float _spHeat = 1.0f;           // 0..1
+    float _spHeatDrainPerSec = 0.30f;
+    float _spHeatRegenPerSec = 0.15f;
     // We keep systems owned by the world; stored here for clarity
     bool _spInitialized = false;
 
@@ -149,7 +168,8 @@ private:
     int _nextSpriteRow = 0; // next row to assign on first sight
 
     // --- Gameplay HUD state (placeholders until server data is wired) ---
-    int _playerLives = 4; // 0..10 (updated via Roster/LivesUpdate)
+    int _playerLives = 4; // 0..10
+    int _maxLives = 6;
     unsigned _selfId = 0;  // our player id (from roster)
     int _score = 0;
     int _level = 1;
