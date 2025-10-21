@@ -6,14 +6,18 @@
 #include <memory>
 #include <raylib.h>
 #include <utility>
+#include <random>
 
 // ECS Engine (standalone) headers for local singleplayer test
 #include "rt/ecs/Registry.hpp"
 #include "rt/components/Position.hpp"
 #include "rt/components/Velocity.hpp"
 #include "rt/components/Controller.hpp"
+#include "rt/components/AiController.hpp"
+#include "rt/components/Enemy.hpp"
 #include "rt/systems/PlayerControlSystem.hpp"
 #include "rt/systems/MovementSystem.hpp"
+#include "rt/systems/AiControlSystem.hpp"
 
 
 namespace client {
@@ -63,10 +67,40 @@ private:
     void shutdownSingleplayerWorld();
     void updateSingleplayerWorld(float dt);
     void drawSingleplayerWorld();
+    // Formation wave spawners (singleplayer sandbox)
+    void spSpawnLine(int count, float y);
+    void spSpawnSnake(int count, float y, float amplitude, float frequency, float spacing);
+    void spSpawnTriangle(int rows, float y, float spacing);
+    void spSpawnDiamond(int rows, float y, float spacing);
+    void spScheduleNextSpawn();
     bool _singleplayerActive = false;
     bool _spPaused = false;
     std::unique_ptr<rt::ecs::Registry> _spWorld;
     rt::ecs::Entity _spPlayer = 0;
+    // Singleplayer enemies and waves
+    enum class SpFormationKind { Line, Snake, Triangle, Diamond };
+    struct SpEnemy {
+        rt::ecs::Entity id{0};
+        SpFormationKind kind{SpFormationKind::Line};
+        int index{0};            // index within formation
+        float baseY{0.f};        // initial baseline Y
+        float spacing{36.f};     // horizontal/vertical spacing
+        float amplitude{60.f};   // for Snake vertical amplitude
+        float frequency{2.0f};   // for Snake frequency
+        float spawnTime{0.f};    // time when spawned (for animation phase)
+        float localX{0.f};       // initial local X within formation
+        float localY{0.f};       // initial local Y within formation
+    };
+    std::vector<SpEnemy> _spEnemies;
+    float _spElapsed = 0.f;
+    float _spSpawnTimer = 0.f;
+    int _spNextFormation = 0;
+    // Random spawn control
+    std::mt19937 _spRng{};
+    float _spNextSpawnDelay = 2.0f; // seconds until next spawn
+    float _spMinSpawnDelay = 1.8f;
+    float _spMaxSpawnDelay = 3.6f;
+    std::size_t _spEnemyCap = 40; // maximum active enemies in sandbox
     // We keep systems owned by the world; stored here for clarity
     bool _spInitialized = false;
 
