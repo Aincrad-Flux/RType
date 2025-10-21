@@ -27,7 +27,10 @@ void Screens::drawMenu(ScreenState& screen) {
     Color disHover = disBg;
 
     Rectangle singleBtn{(float)x, (float)startY, (float)btnWidth, (float)btnHeight};
-    button(singleBtn, "Singleplayer", baseFont, disText, disBg, disHover);
+    if (button(singleBtn, "Singleplayer", baseFont, BLACK, LIGHTGRAY, GRAY)) {
+        screen = ScreenState::Singleplayer;
+        _focusedField = 0;
+    }
 
     Rectangle multiBtn{(float)x, (float)(startY + (btnHeight + gap) * 1), (float)btnWidth, (float)btnHeight};
     if (button(multiBtn, "Multiplayer", baseFont, BLACK, LIGHTGRAY, GRAY)) {

@@ -3,8 +3,25 @@
 #include <vector>
 #include <cstdint>
 #include <unordered_map>
+#include <memory>
 #include <raylib.h>
 #include <utility>
+#include <random>
+
+// ECS Engine (standalone) headers for local singleplayer test
+#include "rt/ecs/Registry.hpp"
+#include "rt/components/Position.hpp"
+#include "rt/components/Velocity.hpp"
+#include "rt/components/Controller.hpp"
+#include "rt/components/Player.hpp"
+#include "rt/components/Size.hpp"
+#include "rt/components/Collided.hpp"
+#include "rt/components/AiController.hpp"
+#include "rt/components/Enemy.hpp"
+#include "rt/systems/PlayerControlSystem.hpp"
+#include "rt/systems/MovementSystem.hpp"
+#include "rt/systems/AiControlSystem.hpp"
+#include "rt/systems/CollisionSystem.hpp"
 
 
 namespace client {
@@ -49,6 +66,63 @@ public:
     void unloadGraphics();
     ~Screens();
 private:
+    // --- Local Singleplayer test (engine sandbox) ---
+    void initSingleplayerWorld();
+    void shutdownSingleplayerWorld();
+    void updateSingleplayerWorld(float dt);
+    void drawSingleplayerWorld();
+    // Formation wave spawners (singleplayer sandbox)
+    void spSpawnLine(int count, float y);
+    void spSpawnSnake(int count, float y, float amplitude, float frequency, float spacing);
+    void spSpawnTriangle(int rows, float y, float spacing);
+    void spSpawnDiamond(int rows, float y, float spacing);
+    void spScheduleNextSpawn();
+    bool _singleplayerActive = false;
+    bool _spPaused = false;
+    std::unique_ptr<rt::ecs::Registry> _spWorld;
+    rt::ecs::Entity _spPlayer = 0;
+    // Singleplayer enemies and waves
+    enum class SpFormationKind { Line, Snake, Triangle, Diamond };
+    struct SpEnemy {
+        rt::ecs::Entity id{0};
+        SpFormationKind kind{SpFormationKind::Line};
+        int index{0};            // index within formation
+        float baseY{0.f};        // initial baseline Y
+        float spacing{36.f};     // horizontal/vertical spacing
+        float amplitude{60.f};   // for Snake vertical amplitude
+        float frequency{2.0f};   // for Snake frequency
+        float spawnTime{0.f};    // time when spawned (for animation phase)
+        float localX{0.f};       // initial local X within formation
+        float localY{0.f};       // initial local Y within formation
+    };
+    std::vector<SpEnemy> _spEnemies;
+    struct SpBullet { float x; float y; float vx; float vy; float w; float h; };
+    std::vector<SpBullet> _spBullets;
+    float _spElapsed = 0.f;
+    float _spSpawnTimer = 0.f;
+    int _spNextFormation = 0;
+    // Random spawn control
+    std::mt19937 _spRng{};
+    float _spNextSpawnDelay = 2.0f; // seconds until next spawn
+    float _spMinSpawnDelay = 1.8f;
+    float _spMaxSpawnDelay = 3.6f;
+    std::size_t _spEnemyCap = 40; // maximum active enemies in sandbox
+    // Shooting config
+    float _spShootCooldown = 0.f;
+    float _spShootInterval = 0.18f;
+    float _spBulletSpeed = 420.f;
+    float _spBulletW = 8.f;
+    float _spBulletH = 3.f;
+    // Player hit cooldown (i-frames)
+    float _spHitIframes = 1.f;      // seconds left of invincibility
+    float _spHitIframesDuration = 1.0f;
+    // Overheat mechanic (center bar): drains while holding fire, locks shooting at 0, recovers when not firing
+    float _spHeat = 1.0f;           // 0..1
+    float _spHeatDrainPerSec = 0.30f;
+    float _spHeatRegenPerSec = 0.15f;
+    // We keep systems owned by the world; stored here for clarity
+    bool _spInitialized = false;
+
     // Check if required sprite assets are available on disk
     bool assetsAvailable() const;
     // Parse a single UDP datagram payload according to our protocol and update local state
@@ -94,7 +168,8 @@ private:
     int _nextSpriteRow = 0; // next row to assign on first sight
 
     // --- Gameplay HUD state (placeholders until server data is wired) ---
-    int _playerLives = 4; // 0..10 (updated via Roster/LivesUpdate)
+    int _playerLives = 4; // 0..10
+    int _maxLives = 6;
     unsigned _selfId = 0;  // our player id (from roster)
     int _score = 0;
     int _level = 1;
