@@ -12,9 +12,12 @@ add_library(rtype_engine
     src/components/Position.cpp
     src/components/Velocity.cpp
     src/components/Controller.cpp
+    src/components/AiController.cpp
+    src/components/Enemy.cpp
     # Systems
     src/systems/MovementSystem.cpp
     src/systems/PlayerControlSystem.cpp
+    src/systems/AiControlSystem.cpp
     # Legacy compatibility for server (rt::game API)
     src/game_compat_Systems.cpp
 )
