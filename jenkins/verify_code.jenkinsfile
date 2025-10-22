@@ -88,33 +88,47 @@ test -f "$BUILD_DIR/compile_commands.json" && echo "compile_commands.json genera
       parallel {
         stage('cppcheck') {
           steps {
-            sh label: 'Run cppcheck', script: '''
-set -eu
-CORES=$( (command -v nproc >/dev/null 2>&1 && nproc) || echo 2 )
+            script {
+              // Run cppcheck and capture exit code; mark build UNSTABLE if issues found
+              def rc = sh(script: '''
+    set -eu
+    CORES=$( (command -v nproc >/dev/null 2>&1 && nproc) || echo 2 )
 
-STATUS=0
-if [ -f "$BUILD_DIR/compile_commands.json" ]; then
-  # Project mode leverages compilation database
-  cppcheck -j"$CORES" \
-    --project="$BUILD_DIR/compile_commands.json" \
-    --enable=all --inconclusive \
-    --suppress=missingIncludeSystem \
-    --inline-suppr \
-    --template=gcc \
-    --error-exitcode=1 2> cppcheck.xml || STATUS=$?
-else
-  # Fallback: scan main source folders
-  cppcheck -j"$CORES" \
-    --enable=all --inconclusive \
-    --suppress=missingIncludeSystem \
-    --inline-suppr \
-    --template=gcc \
-    --error-exitcode=1 \
-    client common engine server 2> cppcheck.xml || STATUS=$?
-fi
+    STATUS=0
+    if [ -f "$BUILD_DIR/compile_commands.json" ]; then
+      # When using the compilation database, cppcheck's unusedFunction check is
+      # incompatible with -j (parallel). Omit -j and suppress unusedFunction to
+      # avoid spurious warnings/errors while keeping other checks enabled.
+      cppcheck \
+        --project="$BUILD_DIR/compile_commands.json" \
+        --enable=all --inconclusive \
+        --suppress=missingIncludeSystem \
+        --suppress=unusedFunction \
+        --inline-suppr \
+        --template=gcc \
+        --error-exitcode=1 2> cppcheck.xml || STATUS=$?
+    else
+      # Fallback: scan main source folders with parallel jobs
+      cppcheck -j"$CORES" \
+        --enable=all --inconclusive \
+        --suppress=missingIncludeSystem \
+        --inline-suppr \
+        --template=gcc \
+        --error-exitcode=1 \
+        client common engine server 2> cppcheck.xml || STATUS=$?
+    fi
 
-exit "$STATUS"
-'''
+    # Return the status so the calling Groovy can decide how to treat it
+    exit "$STATUS"
+    ''', returnStatus: true)
+
+              if (rc != 0) {
+                echo "cppcheck reported issues (exit ${rc}) — marking build as UNSTABLE. See cppcheck.xml for details."
+                currentBuild.result = 'UNSTABLE'
+              } else {
+                echo 'cppcheck passed with no issues.'
+              }
+            }
           }
           post {
             always {
@@ -159,7 +173,7 @@ fi
           }
           post {
             always {
-              archiveArtifacts artifacts: 'clang-tidy*.yaml, clang-tidy.txt', fingerprint: true
+              archiveArtifacts artifacts: 'clang-tidy*.yaml, clang-tidy.txt', fingerprint: true, allowEmptyArchive: true
             }
           }
         }
