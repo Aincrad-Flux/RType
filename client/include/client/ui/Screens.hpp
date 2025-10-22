@@ -65,6 +65,14 @@ public:
     // Release GPU textures (must be called before closing the window)
     void unloadGraphics();
     ~Screens();
+    // Draw global background if available (fills the window keeping aspect ratio)
+    void drawBackground(float dt);
+    // Attempt to load background once (safe to call multiple times)
+    void loadBackground();
+    // Whether a background texture is currently loaded
+    bool hasBackground() const { return _backgroundLoaded; }
+    // Allow changing scroll speed (pixels per second in scaled space)
+    void setBackgroundSpeed(float pxPerSec) { _bgSpeed = pxPerSec; }
 private:
     // --- Local Singleplayer test (engine sandbox) ---
     void initSingleplayerWorld();
@@ -191,6 +199,12 @@ private:
     // --- Shot mode toggle (Normal vs Charge), switched with Ctrl key ---
     enum class ShotMode { Normal = 0, Charge = 1 };
     ShotMode _shotMode = ShotMode::Normal;
+
+    // --- Global background texture ---
+    Texture2D _background{};
+    bool _backgroundLoaded = false;
+    float _bgScrollX = 0.0f; // accumulated scroll offset in pixels (scaled)
+    float _bgSpeed = 60.0f;  // pixels per second, scrolling to the left
 };
 
 } // namespace ui

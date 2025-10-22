@@ -2,6 +2,8 @@
 #include <raylib.h>
 #include <vector>
 #include <string>
+#include <algorithm>
+#include <cmath>
 
 namespace client { namespace ui {
 
@@ -53,15 +55,63 @@ void Screens::loadEnemySprites() {
         ", frame " + std::to_string((int)_enemyFrameW) + "x" + std::to_string((int)_enemyFrameH), "INFO");
 }
 
+void Screens::loadBackground() {
+    if (_backgroundLoaded) return;
+    std::string path = findSpritePath("background.jpg");
+    if (path.empty()) {
+        return;
+    }
+    _background = LoadTexture(path.c_str());
+    if (_background.id == 0) {
+        logMessage("Failed to load background texture.", "ERROR");
+        return;
+    }
+    _backgroundLoaded = true;
+    logMessage("Background loaded: " + std::to_string(_background.width) + "x" + std::to_string(_background.height), "INFO");
+}
+
+void Screens::drawBackground(float dt) {
+    if (!_backgroundLoaded) return;
+    const int sw = GetScreenWidth();
+    const int sh = GetScreenHeight();
+    const float bw = (float)_background.width;
+    const float bh = (float)_background.height;
+    if (sw <= 0 || sh <= 0 || bw <= 0.f || bh <= 0.f) return;
+
+    float scale = std::max((float)sw / bw, (float)sh / bh);
+    float drawW = bw * scale;
+    float drawH = bh * scale;
+
+    _bgScrollX += _bgSpeed * dt;
+    if (drawW > 0.0f) {
+        _bgScrollX = std::fmod(_bgScrollX, drawW);
+        if (_bgScrollX < 0.0f) _bgScrollX += drawW;
+    }
+    float dy = (sh - drawH) * 0.5f;
+    float startX = -_bgScrollX;
+
+    Rectangle src{0.f, 0.f, bw, bh};
+    Vector2 origin{0.f, 0.f};
+
+    int tiles = (int)std::ceil((float)sw / drawW) + 1;
+    for (int i = 0; i < tiles; ++i) {
+        float dx = startX + i * drawW;
+        Rectangle dst{dx, dy, drawW, drawH};
+        DrawTexturePro(_background, src, dst, origin, 0.f, WHITE);
+    }
+}
+
 void Screens::unloadGraphics() {
     if (_sheetLoaded) { UnloadTexture(_sheet); _sheetLoaded = false; }
     if (_enemyLoaded) { UnloadTexture(_enemySheet); _enemyLoaded = false; }
+    if (_backgroundLoaded) { UnloadTexture(_background); _backgroundLoaded = false; }
 }
 
 Screens::~Screens() {
     if (IsWindowReady()) {
         if (_sheetLoaded) { UnloadTexture(_sheet); _sheetLoaded = false; }
         if (_enemyLoaded) { UnloadTexture(_enemySheet); _enemyLoaded = false; }
+        if (_backgroundLoaded) { UnloadTexture(_background); _backgroundLoaded = false; }
     }
 }
 
