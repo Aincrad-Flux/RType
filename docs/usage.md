@@ -29,6 +29,8 @@ The server prints the detected IP and the port. Keep it running.
 
 5) Connect. On success, the Gameplay screen appears and entities start updating.
 
+If the spritesheets are missing, the client will not start the game and will display a message asking you to place the assets.
+
 ## Controls
 
 - Arrow keys: move (Up/Down/Left/Right)
@@ -70,3 +72,14 @@ cmake --build --preset conan-release --target r-type_client
 
 - Firewalls or NAT may block UDP; for local tests use 127.0.0.1.
 - If the Window closes immediately or can’t open, ensure raylib can access a display (X11/Wayland on Linux).
+
+### Assets (sprites)
+
+- The client expects the following files to exist:
+	- `sprites/r-typesheet42.gif` (player)
+	- `sprites/r-typesheet19.gif` (enemies)
+- Place the `sprites/` folder at one of these locations so the client can find it:
+	- Next to the executable (e.g. `build/bin/sprites/`)
+	- Project root (`./sprites/`)
+	- One or two directories above the executable as fallback
+- If these files are not found, the Gameplay won't start.
