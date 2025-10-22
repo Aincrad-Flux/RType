@@ -1,0 +1,177 @@
+pipeline {
+  agent {
+    docker {
+      image 'debian:bookworm'
+      args '-u root:root --privileged'
+    }
+  }
+
+  options {
+    timestamps()
+    ansiColor('xterm')
+  }
+
+  environment {
+    BUILD_DIR = 'build-ci'
+  }
+
+  parameters {
+    string(name: 'SOURCE_REPO', defaultValue: 'https://github.com/Aincrad-Flux/RType.git', description: 'URL of the repo to clone for setup')
+    string(name: 'BRANCH_NAME', defaultValue: 'main', description: 'Branch to test')
+  }
+
+  stages {
+    stage('Clone Repository') {
+      steps {
+        echo "Cloning branch: ${params.BRANCH_NAME} from ${params.SOURCE_REPO}"
+        git branch: "${params.BRANCH_NAME}",
+          url: "${params.SOURCE_REPO}",
+          credentialsId: 'github-https-token'
+      }
+    }
+
+    stage('Prepare tools') {
+      steps {
+        sh label: 'Install cppcheck, clang-tidy, cmake, and Conan in container', script: '''
+set -eu
+
+echo "Installing system dependencies..."
+apt-get update
+# Include pkg-config so Conan recipes can query GL or other libs
+apt-get install -y build-essential cmake git python3-pip python3-venv pkg-config cppcheck clang-tidy
+
+echo "Installing Conan 2..."
+pip3 install --break-system-packages --upgrade conan
+
+echo "Tool versions:"
+cppcheck --version || true
+clang-tidy --version || true
+cmake --version || true
+conan --version || true
+'''
+      }
+    }
+
+    stage('Configure (CMake + Conan)') {
+      steps {
+        sh label: 'Generate compile_commands.json in a clean build directory', script: '''
+set -eu
+CORES=$( (command -v nproc >/dev/null 2>&1 && nproc) || echo 2 )
+
+# Clean and prepare build directory
+rm -rf "$BUILD_DIR"
+mkdir -p "$BUILD_DIR"
+
+# Try Conan toolchain if available (non-fatal if missing)
+if command -v conan >/dev/null 2>&1; then
+  conan profile detect --force || true
+  conan install . --output-folder="$BUILD_DIR" --build=missing || true
+  if [ -f "$BUILD_DIR/conan_toolchain.cmake" ]; then
+    TOOLCHAIN_OPT="-DCMAKE_TOOLCHAIN_FILE=$BUILD_DIR/conan_toolchain.cmake"
+  else
+    TOOLCHAIN_OPT=""
+  fi
+else
+  TOOLCHAIN_OPT=""
+fi
+
+cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON $TOOLCHAIN_OPT
+
+# Optional: do a fast build to help resolve includes (non-fatal)
+cmake --build "$BUILD_DIR" --parallel "$CORES" || true
+
+test -f "$BUILD_DIR/compile_commands.json" && echo "compile_commands.json generated." || echo "Warning: compile_commands.json not found; clang-tidy may be limited."
+'''
+      }
+    }
+
+    stage('Static Analysis') {
+      parallel {
+        stage('cppcheck') {
+          steps {
+            sh label: 'Run cppcheck', script: '''
+set -eu
+CORES=$( (command -v nproc >/dev/null 2>&1 && nproc) || echo 2 )
+
+STATUS=0
+if [ -f "$BUILD_DIR/compile_commands.json" ]; then
+  # Project mode leverages compilation database
+  cppcheck -j"$CORES" \
+    --project="$BUILD_DIR/compile_commands.json" \
+    --enable=all --inconclusive \
+    --suppress=missingIncludeSystem \
+    --inline-suppr \
+    --template=gcc \
+    --error-exitcode=1 2> cppcheck.xml || STATUS=$?
+else
+  # Fallback: scan main source folders
+  cppcheck -j"$CORES" \
+    --enable=all --inconclusive \
+    --suppress=missingIncludeSystem \
+    --inline-suppr \
+    --template=gcc \
+    --error-exitcode=1 \
+    client common engine server 2> cppcheck.xml || STATUS=$?
+fi
+
+exit "$STATUS"
+'''
+          }
+          post {
+            always {
+              archiveArtifacts artifacts: 'cppcheck.xml', fingerprint: true
+            }
+          }
+        }
+
+        stage('clang-tidy') {
+          steps {
+            sh label: 'Run clang-tidy (run-clang-tidy if available)', script: '''
+set -eu
+CORES=$( (command -v nproc >/dev/null 2>&1 && nproc) || echo 2 )
+
+# Collect C++ files
+FILES=$(git ls-files '*.cpp' '*.cc' '*.cxx' || true)
+if [ -z "$FILES" ]; then
+  echo "No C++ source files found; skipping clang-tidy."
+  exit 0
+fi
+
+# Prefer run-clang-tidy helper if present
+RUN_TIDY=$( (command -v run-clang-tidy || command -v run-clang-tidy-16 || command -v run-clang-tidy-15 || command -v run-clang-tidy-14 || command -v run-clang-tidy-13) 2>/dev/null || true )
+
+if [ -n "$RUN_TIDY" ]; then
+  "$RUN_TIDY" -p "$BUILD_DIR" -j "$CORES" -quiet -export-fixes clang-tidy-fixes.yaml | tee clang-tidy.txt
+else
+  # Fallback: run per-file
+  : > clang-tidy.txt
+  STATUS=0
+  for f in $FILES; do
+    # Avoid immediate exit on first failure in this loop
+    set +e
+  clang-tidy "$f" -p "$BUILD_DIR" --quiet -export-fixes "clang-tidy-fixes-$(echo \"$f\" | tr '/' '_').yaml" | tee -a clang-tidy.txt
+    RC=$?
+    set -e
+    if [ "$RC" -ne 0 ]; then STATUS=1; fi
+  done
+  exit "$STATUS"
+fi
+'''
+          }
+          post {
+            always {
+              archiveArtifacts artifacts: 'clang-tidy*.yaml, clang-tidy.txt', fingerprint: true
+            }
+          }
+        }
+      }
+    }
+  }
+
+  post {
+    always {
+      echo 'Static analysis completed.'
+      cleanWs()
+    }
+  }
+}
