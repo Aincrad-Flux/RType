@@ -22,6 +22,8 @@ void App::run() {
     SetExitKey(KEY_NULL);
     SetTargetFPS(60);
 
+    _screens.loadBackground();
+
     float t = 0.f;
     while (!WindowShouldClose() && _screen != ScreenState::Exiting) {
         float dt = GetFrameTime();
@@ -39,7 +41,11 @@ void App::run() {
 
         BeginDrawing();
         ClearBackground(BLACK);
-        drawStarfield(t);
+        if (_screens.hasBackground()) {
+            _screens.drawBackground(dt);
+        } else {
+            drawStarfield(t);
+        }
 
         switch (_screen) {
             case ScreenState::Menu: _screens.drawMenu(_screen); break;
