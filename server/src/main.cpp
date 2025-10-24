@@ -1,10 +1,11 @@
-#include "UdpServer.hpp"
 #include <iostream>
 #include <csignal>
 #include <thread>
 #include <chrono>
 #include <asio.hpp>
 #include <string>
+#include "UdpServer.hpp"
+#include "TcpServer.hpp"
 
 int main(int argc, char** argv) {
     unsigned short port = 4242;
@@ -24,8 +25,8 @@ int main(int argc, char** argv) {
     // Resolve a primary IPv4 to display (prefer 127.0.0.1 if available)
     std::string displayIp = "0.0.0.0";
     try {
-        asio::io_context io;
-        asio::ip::udp::resolver res(io);
+        asio::io_context probe;
+        asio::ip::udp::resolver res(probe);
         auto host = asio::ip::host_name();
         auto results = res.resolve(asio::ip::udp::v4(), host, "");
         std::string fallback;
@@ -40,14 +41,24 @@ int main(int argc, char** argv) {
     std::cout << "###########################\n";
     std::cout << "Server Started\n";
     std::cout << "IP : " << displayIp << "\n";
-    std::cout << "PORT : " << port << "\n";
+    std::cout << "PORT (UDP) : " << port << "\n";
+    std::cout << "PORT (TCP) : " << (port + 1) << "\n";
     std::cout << "###########################\n";
 
     try {
-        rtype::server::UdpServer server(port);
-        server.start();
-        std::cout << "Starting r-type_server on UDP port " << port << "... started\n";
-        std::this_thread::sleep_for(std::chrono::hours(24));
+        asio::io_context io;
+
+        // Unified io_context for both servers
+        auto tcp = std::make_shared<rtype::server::TcpServer>(io, static_cast<unsigned short>(port + 1));
+        rtype::server::UdpServer udp(io, port);
+
+        udp.setTcpServer(tcp.get());
+
+        tcp->start();
+        udp.start();
+
+        // Run I/O on main thread; game loop is in UdpServer's own thread
+        io.run();
         return 0;
     } catch (const asio::system_error& se) {
         std::error_code ec = se.code();
