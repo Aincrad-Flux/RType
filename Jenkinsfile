@@ -26,18 +26,16 @@ pipeline {
 
                     // Poster le message initial
                     if (env.CHANGE_ID) {
-                        postGitHubComment("""## 🔄 Jenkins CI - Pipeline démarré
+                        def message = "## 🔄 Jenkins CI - Pipeline démarré\\n\\n" +
+                                    "**Build:** [#${env.BUILD_NUMBER}](${env.BUILD_URL})\\n" +
+                                    "**Branch:** \`${env.PR_BRANCH}\`\\n\\n" +
+                                    "### 📋 Étapes à exécuter :\\n" +
+                                    "- ⏳ Installation des dépendances\\n" +
+                                    "- ⏳ Build des binaires\\n" +
+                                    "- ⏳ Analyse statique du code\\n\\n" +
+                                    "*Les tests sont en cours d'exécution, veuillez patienter...*"
 
-**Build:** [#${env.BUILD_NUMBER}](${env.BUILD_URL})
-**Branch:** `${env.PR_BRANCH}`
-
-### 📋 Étapes à exécuter :
-- ⏳ Installation des dépendances
-- ⏳ Build des binaires
-- ⏳ Analyse statique du code
-
-*Les tests sont en cours d'exécution, veuillez patienter...*""")
-
+                        postGitHubComment(message)
                         setGitHubStatus('pending', 'Pipeline en cours...')
                     }
                 }
@@ -52,7 +50,7 @@ pipeline {
                             updatePipelineStatus('dependencies', 'running')
 
                             try {
-                                build job: 'RType-Install-Dependencies',
+                                build job: '/R-Type/RType-Install-Dependencies',
                                     parameters: [
                                         string(name: 'SOURCE_REPO', value: env.REPO_URL),
                                         string(name: 'BRANCH_NAME', value: env.PR_BRANCH)
@@ -77,7 +75,7 @@ pipeline {
                             updatePipelineStatus('build', 'running')
 
                             try {
-                                def buildResult = build job: 'RType-Build-All-Binaries',
+                                def buildResult = build job: '/R-Type/RType-Build-All-Binaries',
                                     parameters: [
                                         string(name: 'SOURCE_REPO', value: env.REPO_URL),
                                         string(name: 'BRANCH_NAME', value: env.PR_BRANCH)
@@ -90,11 +88,16 @@ pipeline {
                                 updatePipelineStatus('build', 'success')
 
                                 // Copier les artefacts
-                                copyArtifacts(
-                                    projectName: 'RType-Build-All-Binaries',
-                                    selector: specific("${buildResult.number}"),
-                                    target: 'artifacts/'
-                                )
+                                try {
+                                    copyArtifacts(
+                                        projectName: '/R-Type/RType-Build-All-Binaries',
+                                        selector: specific("${buildResult.number}"),
+                                        target: 'artifacts/',
+                                        optional: true
+                                    )
+                                } catch (Exception e) {
+                                    echo "⚠️ Impossible de copier les artefacts: ${e.getMessage()}"
+                                }
 
                             } catch (Exception e) {
                                 env.BUILD_STATUS = 'FAILURE'
@@ -111,13 +114,13 @@ pipeline {
                             updatePipelineStatus('analysis', 'running')
 
                             try {
-                                def analysisResult = build job: 'RType-Verify-Code-Integrity',
+                                def analysisResult = build job: '/R-Type/RType-Verify-Code-Integrity',
                                     parameters: [
                                         string(name: 'SOURCE_REPO', value: env.REPO_URL),
                                         string(name: 'BRANCH_NAME', value: env.PR_BRANCH)
                                     ],
                                     wait: true,
-                                    propagate: false // Ne pas échouer si UNSTABLE
+                                    propagate: false
 
                                 env.ANALYSIS_STATUS = analysisResult.result
 
@@ -125,7 +128,6 @@ pipeline {
                                     updatePipelineStatus('analysis', 'success')
                                 } else if (analysisResult.result == 'UNSTABLE') {
                                     updatePipelineStatus('analysis', 'unstable')
-                                    // Ne pas échouer le build principal
                                     echo "⚠️ Analyse statique UNSTABLE - des warnings ont été détectés"
                                 } else {
                                     updatePipelineStatus('analysis', 'failure')
@@ -170,22 +172,19 @@ pipeline {
         success {
             script {
                 if (env.CHANGE_ID) {
-                    postGitHubComment("""## ✅ Jenkins CI - Tous les tests sont passés !
+                    def message = "## ✅ Jenkins CI - Tous les tests sont passés !\\n\\n" +
+                                "**Build:** [#${env.BUILD_NUMBER}](${env.BUILD_URL})\\n" +
+                                "**Durée:** ${currentBuild.durationString.replace(' and counting', '')}\\n\\n" +
+                                "### 📊 Résultats détaillés :\\n" +
+                                "| Étape | Statut |\\n" +
+                                "|-------|--------|\\n" +
+                                "| 📦 Installation des dépendances | ✅ Succès |\\n" +
+                                "| 🔨 Build des binaires | ✅ Succès |\\n" +
+                                "| 🔍 Analyse statique | ✅ Succès |\\n\\n" +
+                                "### 🎉 Cette pull request peut être mergée !\\n\\n" +
+                                "Les binaires compilés sont disponibles dans les artefacts du build."
 
-**Build:** [#${env.BUILD_NUMBER}](${env.BUILD_URL})
-**Durée:** ${currentBuild.durationString.replace(' and counting', '')}
-
-### 📊 Résultats détaillés :
-| Étape | Statut |
-|-------|--------|
-| 📦 Installation des dépendances | ✅ Succès |
-| 🔨 Build des binaires | ✅ Succès |
-| 🔍 Analyse statique | ✅ Succès |
-
-### 🎉 Cette pull request peut être mergée !
-
-Les binaires compilés sont disponibles dans les artefacts du build.""")
-
+                    postGitHubComment(message)
                     setGitHubStatus('success', 'Tous les tests sont passés')
                 }
             }
@@ -194,23 +193,21 @@ Les binaires compilés sont disponibles dans les artefacts du build.""")
         unstable {
             script {
                 if (env.CHANGE_ID) {
-                    postGitHubComment("""## ⚠️ Jenkins CI - Build terminé avec des warnings
+                    def message = "## ⚠️ Jenkins CI - Build terminé avec des warnings\\n\\n" +
+                                "**Build:** [#${env.BUILD_NUMBER}](${env.BUILD_URL})\\n" +
+                                "**Durée:** ${currentBuild.durationString.replace(' and counting', '')}\\n\\n" +
+                                "### 📊 Résultats détaillés :\\n" +
+                                "| Étape | Statut |\\n" +
+                                "|-------|--------|\\n" +
+                                "| 📦 Installation des dépendances | ${getStatusEmoji(env.DEPS_STATUS)} ${env.DEPS_STATUS} |\\n" +
+                                "| 🔨 Build des binaires | ${getStatusEmoji(env.BUILD_STATUS)} ${env.BUILD_STATUS} |\\n" +
+                                "| 🔍 Analyse statique | ${getStatusEmoji(env.ANALYSIS_STATUS)} ${env.ANALYSIS_STATUS} |\\n\\n" +
+                                "### 💡 Recommandations :\\n" +
+                                "L'analyse statique a détecté des warnings (cppcheck ou clang-tidy). " +
+                                "Ces warnings n'empêchent pas le merge mais devraient être corrigés pour améliorer la qualité du code.\\n\\n" +
+                                "Consultez les artefacts du job [Verify Code Integrity](${env.JENKINS_URL}job/R-Type/job/RType-Verify-Code-Integrity/) pour plus de détails."
 
-**Build:** [#${env.BUILD_NUMBER}](${env.BUILD_URL})
-**Durée:** ${currentBuild.durationString.replace(' and counting', '')}
-
-### 📊 Résultats détaillés :
-| Étape | Statut |
-|-------|--------|
-| 📦 Installation des dépendances | ${getStatusEmoji(env.DEPS_STATUS)} ${env.DEPS_STATUS} |
-| 🔨 Build des binaires | ${getStatusEmoji(env.BUILD_STATUS)} ${env.BUILD_STATUS} |
-| 🔍 Analyse statique | ${getStatusEmoji(env.ANALYSIS_STATUS)} ${env.ANALYSIS_STATUS} |
-
-### 💡 Recommandations :
-L'analyse statique a détecté des warnings (cppcheck ou clang-tidy). Ces warnings n'empêchent pas le merge mais devraient être corrigés pour améliorer la qualité du code.
-
-Consultez les artefacts du job [Verify Code Integrity](${env.JENKINS_URL}job/RType-Verify-Code-Integrity/) pour plus de détails.""")
-
+                    postGitHubComment(message)
                     setGitHubStatus('success', 'Build réussi avec warnings')
                 }
             }
@@ -219,21 +216,24 @@ Consultez les artefacts du job [Verify Code Integrity](${env.JENKINS_URL}job/RTy
         failure {
             script {
                 if (env.CHANGE_ID) {
-                    postGitHubComment("""## ❌ Jenkins CI - Des tests ont échoué
+                    def depsStatus = env.DEPS_STATUS ?: 'N/A'
+                    def buildStatus = env.BUILD_STATUS ?: 'N/A'
+                    def analysisStatus = env.ANALYSIS_STATUS ?: 'N/A'
 
-**Build:** [#${env.BUILD_NUMBER}](${env.BUILD_URL})
-**Durée:** ${currentBuild.durationString.replace(' and counting', '')}
+                    def message = "## ❌ Jenkins CI - Des tests ont échoué\\n\\n" +
+                                "**Build:** [#${env.BUILD_NUMBER}](${env.BUILD_URL})\\n" +
+                                "**Durée:** ${currentBuild.durationString.replace(' and counting', '')}\\n\\n" +
+                                "### 📊 Résultats détaillés :\\n" +
+                                "| Étape | Statut |\\n" +
+                                "|-------|--------|\\n" +
+                                "| 📦 Installation des dépendances | ${getStatusEmoji(depsStatus)} ${depsStatus} |\\n" +
+                                "| 🔨 Build des binaires | ${getStatusEmoji(buildStatus)} ${buildStatus} |\\n" +
+                                "| 🔍 Analyse statique | ${getStatusEmoji(analysisStatus)} ${analysisStatus} |\\n\\n" +
+                                "### 🔧 Actions requises :\\n" +
+                                "Veuillez consulter les [logs du build](${env.BUILD_URL}console) " +
+                                "pour identifier et corriger les erreurs avant de merger cette pull request."
 
-### 📊 Résultats détaillés :
-| Étape | Statut |
-|-------|--------|
-| 📦 Installation des dépendances | ${getStatusEmoji(env.DEPS_STATUS)} ${env.DEPS_STATUS ?: 'N/A'} |
-| 🔨 Build des binaires | ${getStatusEmoji(env.BUILD_STATUS)} ${env.BUILD_STATUS ?: 'N/A'} |
-| 🔍 Analyse statique | ${getStatusEmoji(env.ANALYSIS_STATUS)} ${env.ANALYSIS_STATUS ?: 'N/A'} |
-
-### 🔧 Actions requises :
-Veuillez consulter les [logs du build](${env.BUILD_URL}console) pour identifier et corriger les erreurs avant de merger cette pull request.""")
-
+                    postGitHubComment(message)
                     setGitHubStatus('failure', 'Des tests ont échoué')
                 }
             }
@@ -242,7 +242,6 @@ Veuillez consulter les [logs du build](${env.BUILD_URL}console) pour identifier 
         always {
             script {
                 echo '🧹 Nettoyage...'
-                // Ne pas nettoyer le workspace pour garder les artefacts
             }
         }
     }
@@ -261,23 +260,19 @@ def postGitHubComment(String message) {
         def owner = repoInfo[-4]
         def repo = repoInfo[-3]
 
-        // Échapper les caractères spéciaux pour JSON
-        def escapedMessage = message
-            .replace('\\', '\\\\')
-            .replace('"', '\\"')
-            .replace('\n', '\\n')
-            .replace('\r', '\\r')
-            .replace('\t', '\\t')
+        writeFile file: 'comment.json', text: "{\"body\": \"${message}\"}"
 
         sh """
             curl -s -X POST \
                 -H "Authorization: token \${GITHUB_TOKEN}" \
                 -H "Accept: application/vnd.github.v3+json" \
                 -H "Content-Type: application/json" \
-                -d '{"body": "${escapedMessage}"}' \
+                -d @comment.json \
                 "https://api.github.com/repos/${owner}/${repo}/issues/${env.CHANGE_ID}/comments" \
-                || echo "Erreur lors du post du commentaire GitHub"
+                || echo "⚠️ Erreur lors du post du commentaire GitHub"
         """
+
+        sh 'rm -f comment.json'
     } catch (Exception e) {
         echo "Erreur lors du post du commentaire: ${e.getMessage()}"
     }
@@ -294,20 +289,26 @@ def setGitHubStatus(String state, String description) {
         def owner = repoInfo[-4]
         def repo = repoInfo[-3]
 
+        writeFile file: 'status.json', text: """
+{
+    "state": "${state}",
+    "target_url": "${env.BUILD_URL}",
+    "description": "${description}",
+    "context": "continuous-integration/jenkins/pr-merge"
+}
+"""
+
         sh """
             curl -s -X POST \
                 -H "Authorization: token \${GITHUB_TOKEN}" \
                 -H "Accept: application/vnd.github.v3+json" \
                 -H "Content-Type: application/json" \
-                -d '{
-                    "state": "${state}",
-                    "target_url": "${env.BUILD_URL}",
-                    "description": "${description}",
-                    "context": "continuous-integration/jenkins/pr-merge"
-                }' \
+                -d @status.json \
                 "https://api.github.com/repos/${owner}/${repo}/statuses/${env.GIT_COMMIT}" \
-                || echo "Erreur lors de la mise à jour du status GitHub"
+                || echo "⚠️ Erreur lors de la mise à jour du status GitHub"
         """
+
+        sh 'rm -f status.json'
     } catch (Exception e) {
         echo "Erreur lors de la mise à jour du status: ${e.getMessage()}"
     }
@@ -350,7 +351,8 @@ def getStatusEmoji(String status) {
         'FAILURE': '❌',
         'UNSTABLE': '⚠️',
         'ABORTED': '🚫',
-        'NOT_BUILT': '⏭️'
+        'NOT_BUILT': '⏭️',
+        'N/A': '❓'
     ]
     return emojis[status] ?: '❓'
 }
