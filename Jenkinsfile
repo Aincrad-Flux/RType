@@ -8,7 +8,7 @@ pipeline {
     }
 
     environment {
-        GITHUB_TOKEN = credentials('Aincrad-Github')
+        GITHUB_TOKEN = credentials('github-https-token')
         REPO_URL = 'https://github.com/Aincrad-Flux/RType.git'
     }
 
@@ -94,7 +94,7 @@ pipeline {
                                 try {
                                     copyArtifacts(
                                         projectName: '/R-Type/RType-Build-All-Binaries',
-                                        selector: specific("${buildResult.number}"),
+                                        selector: [$class: 'SpecificBuildSelector', buildNumber: "${buildResult.number}"],
                                         target: 'artifacts/',
                                         optional: true
                                     )
@@ -272,21 +272,33 @@ def postGitHubComment(String message) {
         def owner = repoInfo[-4]
         def repo = repoInfo[-3]
 
-        writeFile file: 'comment.json', text: "{\"body\": \"${message}\"}"
+        // Échapper les caractères spéciaux pour JSON
+        def escapedMessage = message.replaceAll('"', '\\\\"').replaceAll('\n', '\\\\n')
 
-        sh """
-            curl -s -X POST \
-                -H "Authorization: token \${GITHUB_TOKEN}" \
-                -H "Accept: application/vnd.github.v3+json" \
-                -H "Content-Type: application/json" \
-                -d @comment.json \
-                "https://api.github.com/repos/${owner}/${repo}/issues/${env.CHANGE_ID}/comments" \
-                || echo "⚠️ Erreur lors du post du commentaire GitHub"
-        """
+        def response = sh(
+            script: """
+                curl -s -w "\\n%{http_code}" -X POST \
+                    -H "Authorization: Bearer \${GITHUB_TOKEN}" \
+                    -H "Accept: application/vnd.github+json" \
+                    -H "X-GitHub-Api-Version: 2022-11-28" \
+                    -H "Content-Type: application/json" \
+                    -d '{"body": "${escapedMessage}"}' \
+                    "https://api.github.com/repos/${owner}/${repo}/issues/${env.CHANGE_ID}/comments"
+            """,
+            returnStdout: true
+        ).trim()
 
-        sh 'rm -f comment.json'
+        def lines = response.split('\n')
+        def httpCode = lines[-1]
+
+        if (httpCode != '201') {
+            echo "⚠️ Échec du commentaire GitHub (HTTP ${httpCode})"
+            echo "Réponse: ${lines[0..-2].join('\n')}"
+        } else {
+            echo "✅ Commentaire GitHub posté avec succès"
+        }
     } catch (Exception e) {
-        echo "Erreur lors du post du commentaire: ${e.getMessage()}"
+        echo "⚠️ Erreur lors du post du commentaire: ${e.getMessage()}"
     }
 }
 
@@ -301,28 +313,33 @@ def setGitHubStatus(String state, String description) {
         def owner = repoInfo[-4]
         def repo = repoInfo[-3]
 
-        writeFile file: 'status.json', text: """
-{
-    "state": "${state}",
-    "target_url": "${env.BUILD_URL}",
-    "description": "${description}",
-    "context": "continuous-integration/jenkins/pr-merge"
-}
-"""
+        // Échapper les caractères spéciaux pour JSON
+        def escapedDescription = description.replaceAll('"', '\\\\"')
 
-        sh """
-            curl -s -X POST \
-                -H "Authorization: token \${GITHUB_TOKEN}" \
-                -H "Accept: application/vnd.github.v3+json" \
-                -H "Content-Type: application/json" \
-                -d @status.json \
-                "https://api.github.com/repos/${owner}/${repo}/statuses/${env.GIT_COMMIT}" \
-                || echo "⚠️ Erreur lors de la mise à jour du status GitHub"
-        """
+        def response = sh(
+            script: """
+                curl -s -w "\\n%{http_code}" -X POST \
+                    -H "Authorization: Bearer \${GITHUB_TOKEN}" \
+                    -H "Accept: application/vnd.github+json" \
+                    -H "X-GitHub-Api-Version: 2022-11-28" \
+                    -H "Content-Type: application/json" \
+                    -d '{"state": "${state}", "target_url": "${env.BUILD_URL}", "description": "${escapedDescription}", "context": "continuous-integration/jenkins/pr-merge"}' \
+                    "https://api.github.com/repos/${owner}/${repo}/statuses/${env.GIT_COMMIT}"
+            """,
+            returnStdout: true
+        ).trim()
 
-        sh 'rm -f status.json'
+        def lines = response.split('\n')
+        def httpCode = lines[-1]
+
+        if (httpCode != '201') {
+            echo "⚠️ Échec du status GitHub (HTTP ${httpCode})"
+            echo "Réponse: ${lines[0..-2].join('\n')}"
+        } else {
+            echo "✅ Status GitHub mis à jour avec succès"
+        }
     } catch (Exception e) {
-        echo "Erreur lors de la mise à jour du status: ${e.getMessage()}"
+        echo "⚠️ Erreur lors de la mise à jour du status: ${e.getMessage()}"
     }
 }
 
