@@ -8,7 +8,7 @@ pipeline {
     }
 
     environment {
-        GITHUB_TOKEN = credentials('github-https-token')
+        GITHUB_TOKEN = credentials('Aincrad-Github')
         REPO_URL = 'https://github.com/Aincrad-Flux/RType.git'
     }
 
@@ -26,14 +26,17 @@ pipeline {
 
                     // Poster le message initial
                     if (env.CHANGE_ID) {
-                        def message = "## 🔄 Jenkins CI - Pipeline démarré\\n\\n" +
-                                    "**Build:** [#${env.BUILD_NUMBER}](${env.BUILD_URL})\\n" +
-                                    "**Branch:** \`${env.PR_BRANCH}\`\\n\\n" +
-                                    "### 📋 Étapes à exécuter :\\n" +
-                                    "- ⏳ Installation des dépendances\\n" +
-                                    "- ⏳ Build des binaires\\n" +
-                                    "- ⏳ Analyse statique du code\\n\\n" +
-                                    "*Les tests sont en cours d'exécution, veuillez patienter...*"
+                        def message = """## 🔄 Jenkins CI - Pipeline démarré
+
+**Build:** [#${env.BUILD_NUMBER}](${env.BUILD_URL})
+**Branch:** `${env.PR_BRANCH}`
+
+### 📋 Étapes à exécuter :
+- ⏳ Installation des dépendances
+- ⏳ Build des binaires
+- ⏳ Analyse statique du code
+
+*Les tests sont en cours d'exécution, veuillez patienter...*"""
 
                         postGitHubComment(message)
                         setGitHubStatus('pending', 'Pipeline en cours...')
@@ -172,17 +175,21 @@ pipeline {
         success {
             script {
                 if (env.CHANGE_ID) {
-                    def message = "## ✅ Jenkins CI - Tous les tests sont passés !\\n\\n" +
-                                "**Build:** [#${env.BUILD_NUMBER}](${env.BUILD_URL})\\n" +
-                                "**Durée:** ${currentBuild.durationString.replace(' and counting', '')}\\n\\n" +
-                                "### 📊 Résultats détaillés :\\n" +
-                                "| Étape | Statut |\\n" +
-                                "|-------|--------|\\n" +
-                                "| 📦 Installation des dépendances | ✅ Succès |\\n" +
-                                "| 🔨 Build des binaires | ✅ Succès |\\n" +
-                                "| 🔍 Analyse statique | ✅ Succès |\\n\\n" +
-                                "### 🎉 Cette pull request peut être mergée !\\n\\n" +
-                                "Les binaires compilés sont disponibles dans les artefacts du build."
+                    def message = """## ✅ Jenkins CI - Tous les tests sont passés !
+
+**Build:** [#${env.BUILD_NUMBER}](${env.BUILD_URL})
+**Durée:** ${currentBuild.durationString.replace(' and counting', '')}
+
+### 📊 Résultats détaillés :
+| Étape | Statut |
+|-------|--------|
+| 📦 Installation des dépendances | ✅ Succès |
+| 🔨 Build des binaires | ✅ Succès |
+| 🔍 Analyse statique | ✅ Succès |
+
+### 🎉 Cette pull request peut être mergée !
+
+Les binaires compilés sont disponibles dans les artefacts du build."""
 
                     postGitHubComment(message)
                     setGitHubStatus('success', 'Tous les tests sont passés')
@@ -193,19 +200,22 @@ pipeline {
         unstable {
             script {
                 if (env.CHANGE_ID) {
-                    def message = "## ⚠️ Jenkins CI - Build terminé avec des warnings\\n\\n" +
-                                "**Build:** [#${env.BUILD_NUMBER}](${env.BUILD_URL})\\n" +
-                                "**Durée:** ${currentBuild.durationString.replace(' and counting', '')}\\n\\n" +
-                                "### 📊 Résultats détaillés :\\n" +
-                                "| Étape | Statut |\\n" +
-                                "|-------|--------|\\n" +
-                                "| 📦 Installation des dépendances | ${getStatusEmoji(env.DEPS_STATUS)} ${env.DEPS_STATUS} |\\n" +
-                                "| 🔨 Build des binaires | ${getStatusEmoji(env.BUILD_STATUS)} ${env.BUILD_STATUS} |\\n" +
-                                "| 🔍 Analyse statique | ${getStatusEmoji(env.ANALYSIS_STATUS)} ${env.ANALYSIS_STATUS} |\\n\\n" +
-                                "### 💡 Recommandations :\\n" +
-                                "L'analyse statique a détecté des warnings (cppcheck ou clang-tidy). " +
-                                "Ces warnings n'empêchent pas le merge mais devraient être corrigés pour améliorer la qualité du code.\\n\\n" +
-                                "Consultez les artefacts du job [Verify Code Integrity](${env.JENKINS_URL}job/R-Type/job/RType-Verify-Code-Integrity/) pour plus de détails."
+                    def message = """## ⚠️ Jenkins CI - Build terminé avec des warnings
+
+**Build:** [#${env.BUILD_NUMBER}](${env.BUILD_URL})
+**Durée:** ${currentBuild.durationString.replace(' and counting', '')}
+
+### 📊 Résultats détaillés :
+| Étape | Statut |
+|-------|--------|
+| 📦 Installation des dépendances | ${getStatusEmoji(env.DEPS_STATUS)} ${env.DEPS_STATUS} |
+| 🔨 Build des binaires | ${getStatusEmoji(env.BUILD_STATUS)} ${env.BUILD_STATUS} |
+| 🔍 Analyse statique | ${getStatusEmoji(env.ANALYSIS_STATUS)} ${env.ANALYSIS_STATUS} |
+
+### 💡 Recommandations :
+L'analyse statique a détecté des warnings (cppcheck ou clang-tidy). Ces warnings n'empêchent pas le merge mais devraient être corrigés pour améliorer la qualité du code.
+
+Consultez les artefacts du job [Verify Code Integrity](${env.JENKINS_URL}job/R-Type/job/RType-Verify-Code-Integrity/) pour plus de détails."""
 
                     postGitHubComment(message)
                     setGitHubStatus('success', 'Build réussi avec warnings')
@@ -220,18 +230,20 @@ pipeline {
                     def buildStatus = env.BUILD_STATUS ?: 'N/A'
                     def analysisStatus = env.ANALYSIS_STATUS ?: 'N/A'
 
-                    def message = "## ❌ Jenkins CI - Des tests ont échoué\\n\\n" +
-                                "**Build:** [#${env.BUILD_NUMBER}](${env.BUILD_URL})\\n" +
-                                "**Durée:** ${currentBuild.durationString.replace(' and counting', '')}\\n\\n" +
-                                "### 📊 Résultats détaillés :\\n" +
-                                "| Étape | Statut |\\n" +
-                                "|-------|--------|\\n" +
-                                "| 📦 Installation des dépendances | ${getStatusEmoji(depsStatus)} ${depsStatus} |\\n" +
-                                "| 🔨 Build des binaires | ${getStatusEmoji(buildStatus)} ${buildStatus} |\\n" +
-                                "| 🔍 Analyse statique | ${getStatusEmoji(analysisStatus)} ${analysisStatus} |\\n\\n" +
-                                "### 🔧 Actions requises :\\n" +
-                                "Veuillez consulter les [logs du build](${env.BUILD_URL}console) " +
-                                "pour identifier et corriger les erreurs avant de merger cette pull request."
+                    def message = """## ❌ Jenkins CI - Des tests ont échoué
+
+**Build:** [#${env.BUILD_NUMBER}](${env.BUILD_URL})
+**Durée:** ${currentBuild.durationString.replace(' and counting', '')}
+
+### 📊 Résultats détaillés :
+| Étape | Statut |
+|-------|--------|
+| 📦 Installation des dépendances | ${getStatusEmoji(depsStatus)} ${depsStatus} |
+| 🔨 Build des binaires | ${getStatusEmoji(buildStatus)} ${buildStatus} |
+| 🔍 Analyse statique | ${getStatusEmoji(analysisStatus)} ${analysisStatus} |
+
+### 🔧 Actions requises :
+Veuillez consulter les [logs du build](${env.BUILD_URL}console) pour identifier et corriger les erreurs avant de merger cette pull request."""
 
                     postGitHubComment(message)
                     setGitHubStatus('failure', 'Des tests ont échoué')
