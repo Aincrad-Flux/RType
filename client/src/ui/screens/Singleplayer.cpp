@@ -114,6 +114,16 @@ void Screens::initSingleplayerWorld() {
     player.add<rt::components::Size>(24.f, 16.f);
     _spPlayer = player;
 
+    // Reset score at the start of a singleplayer run
+    _score = 0;
+
+    // Reset power-ups and schedule first threshold between 1500 and 2000 points
+    _spPowerups.clear();
+    {
+        std::uniform_int_distribution<int> dd(_spPowerupMinPts, _spPowerupMaxPts);
+        _spNextPowerupScore = dd(_spRng);
+    }
+
     // Start with an initial simple line
     _spEnemies.clear();
     _spBullets.clear();
@@ -262,6 +272,25 @@ void Screens::updateSingleplayerWorld(float dt) {
                     // Enemy dies on hit: remove entity and from list
                     _spWorld->destroy(en.id);
                     _spEnemies.erase(_spEnemies.begin() + (long)ei);
+                    // Award score: +50 per enemy killed
+                    _score += 50;
+                    // Check and spawn power-ups when crossing threshold(s)
+                    while (_score >= _spNextPowerupScore) {
+                        // Spawn a green sphere from the right moving left
+                        int h = GetScreenHeight();
+                        float topMargin = h * 0.10f;
+                        float bottomMargin = h * 0.05f;
+                        float minY = topMargin + 16.f;
+                        float maxY = h - bottomMargin - 16.f;
+                        if (maxY < minY) maxY = minY + 1.f;
+                        std::uniform_real_distribution<float> ydist(minY, maxY);
+                        float y = ydist(_spRng);
+                        float x = (float)screenW + _spPowerupRadius + 8.f;
+                        _spPowerups.push_back({x, y, -_spPowerupSpeed, _spPowerupRadius});
+                        // Schedule next threshold
+                        std::uniform_int_distribution<int> dd(_spPowerupMinPts, _spPowerupMaxPts);
+                        _spNextPowerupScore += dd(_spRng);
+                    }
                     destroyBullet = true;
                 }
             }
@@ -269,6 +298,37 @@ void Screens::updateSingleplayerWorld(float dt) {
         if (destroyBullet) _spBullets.erase(_spBullets.begin() + (long)i);
         else ++i;
     }
+
+    // Move power-ups and handle pickup/offscreen
+    if (!_gameOver) {
+        // Player rectangle for collision
+        float px = 0.f, py = 0.f, pw = 24.f, ph = 16.f;
+        if (auto* pp = _spWorld->get<rt::components::Position>(_spPlayer)) { px = pp->x; py = pp->y; }
+        auto rectCircleHit = [&](float cx, float cy, float r) {
+            // Clamp circle center to rectangle bounds then compare distance
+            float rx1 = px, ry1 = py, rx2 = px + pw, ry2 = py + ph;
+            float closestX = std::clamp(cx, rx1, rx2);
+            float closestY = std::clamp(cy, ry1, ry2);
+            float dx = cx - closestX;
+            float dy = cy - closestY;
+            return (dx*dx + dy*dy) <= (r * r);
+        };
+        for (std::size_t i = 0; i < _spPowerups.size(); ) {
+            auto& pu = _spPowerups[i];
+            pu.x += pu.vx * dt;
+            bool remove = false;
+            // Pickup
+            if (rectCircleHit(pu.x, pu.y, pu.radius)) {
+                if (_playerLives < _maxLives) _playerLives += 1;
+                remove = true;
+            }
+            // Offscreen
+            if (pu.x + pu.radius < -20.f) remove = true;
+            if (remove) _spPowerups.erase(_spPowerups.begin() + (long)i);
+            else ++i;
+        }
+    }
+
     _spWorld->update(dt);
 
     // If engine marked player as collided, decrement life and clear flag
@@ -305,6 +365,13 @@ void Screens::drawSingleplayerWorld() {
         Rectangle rect{b.x, b.y, b.w, b.h};
         DrawRectangleRec(rect, (Color){240, 220, 80, 255});
     }
+    // draw power-ups as green circles
+    for (auto& pu : _spPowerups) {
+        Color fill = (Color){100, 220, 120, 255};
+        Color line = (Color){60, 160, 80, 255};
+        DrawCircle((int)pu.x, (int)pu.y, pu.radius, fill);
+        DrawCircleLines((int)pu.x, (int)pu.y, pu.radius, line);
+    }
 
     // Draw lives bar at bottom-left: squares representing HP
     int w = GetScreenWidth();
@@ -335,6 +402,11 @@ void Screens::drawSingleplayerWorld() {
     DrawRectangle(barX, barY, fillW, barInnerH, fillC);
     // outline
     DrawRectangleLines(barX, barY, barW, barInnerH, (Color){220, 220, 220, 200});
+
+    // Draw current score at the top-left corner
+    int font = baseFontFromHeight(h);
+    std::string scoreText = std::string("Score: ") + std::to_string(_score);
+    DrawText(scoreText.c_str(), margin, margin, font, RAYWHITE);
 }
 
 // --- Formation spawners ---
