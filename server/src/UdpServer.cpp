@@ -3,6 +3,7 @@
 #include <cstring>
 #include <cmath>
 #include <chrono>
+#include <algorithm>
 #include "rt/game/Components.hpp"
 #include "rt/game/Systems.hpp"
 using namespace rtype::server;
@@ -53,6 +54,15 @@ void UdpServer::handlePacket(const asio::ip::udp::endpoint& from, const char* da
     std::size_t payloadSize = size - sizeof(rtype::net::Header);
     auto key = makeKey(from);
     lastSeen_[key] = std::chrono::steady_clock::now();
+    // Debug: trace incoming packet types
+    switch (header->type) {
+        case rtype::net::MsgType::Hello: std::cout << "[server] RX Hello from " << key << std::endl; break;
+        case rtype::net::MsgType::Input: break; // too chatty
+        case rtype::net::MsgType::Disconnect: std::cout << "[server] RX Disconnect from " << key << std::endl; break;
+        case rtype::net::MsgType::LobbyConfig: std::cout << "[server] RX LobbyConfig from " << key << std::endl; break;
+        case rtype::net::MsgType::StartMatch: std::cout << "[server] RX StartMatch from " << key << std::endl; break;
+        default: std::cout << "[server] RX type=" << (int)header->type << " from " << key << std::endl; break;
+    }
 
     if (header->type == rtype::net::MsgType::Hello) {
         keyToEndpoint_[key] = from;
@@ -70,7 +80,8 @@ void UdpServer::handlePacket(const asio::ip::udp::endpoint& from, const char* da
             endpointToPlayerId_[key] = e;
             playerInputBits_[e] = 0;
             // Default lives
-            playerLives_[e] = 4;
+            std::uint8_t base = std::clamp<std::uint8_t>(lobbyBaseLives_, 1, (std::uint8_t)6);
+            playerLives_[e] = base;
             playerScores_[e] = 0;
             // Parse optional username in payload
             std::string uname;
@@ -83,6 +94,12 @@ void UdpServer::handlePacket(const asio::ip::udp::endpoint& from, const char* da
             playerNames_[e] = uname;
             // Send roster immediately on new join
             broadcastRoster();
+            // If no host yet, assign this player as host
+            if (hostId_ == 0) hostId_ = e;
+            // Send lobby status so clients know host and settings
+            broadcastLobbyStatus();
+            std::cout << "[server] Player joined: id=" << e << " name='" << playerNames_[e]
+                      << "' totalPlayers=" << endpointToPlayerId_.size() << std::endl;
         }
         rtype::net::Header ack{0, rtype::net::MsgType::HelloAck, rtype::net::ProtocolVersion};
         doSend(from, &ack, sizeof(ack));
@@ -107,6 +124,65 @@ void UdpServer::handlePacket(const asio::ip::udp::endpoint& from, const char* da
         removeClient(key);
         return;
     }
+
+    if (header->type == rtype::net::MsgType::LobbyConfig) {
+        // Only host can change lobby settings
+        auto it = endpointToPlayerId_.find(key);
+        if (it != endpointToPlayerId_.end() && it->second == hostId_) {
+            if (payloadSize >= sizeof(rtype::net::LobbyConfigPayload)) {
+                auto* cfg = reinterpret_cast<const rtype::net::LobbyConfigPayload*>(payload);
+                lobbyBaseLives_ = std::clamp<std::uint8_t>(cfg->baseLives, 1, (std::uint8_t)6);
+                lobbyDifficulty_ = std::clamp<std::uint8_t>(cfg->difficulty, (std::uint8_t)0, (std::uint8_t)2);
+                // map difficulty -> shooter percent
+                switch (lobbyDifficulty_) {
+                    case 0: shooterPercent_ = 15; break; // Easy
+                    case 1: shooterPercent_ = 35; break; // Normal
+                    case 2: shooterPercent_ = 60; break; // Hard
+                    default: shooterPercent_ = 25; break;
+                }
+                if (spawnSys_) { spawnSys_->setDifficulty(lobbyDifficulty_); spawnSys_->setShooterPercent(shooterPercent_); }
+                // If match not started, update lives for connected players to reflect base
+                if (!matchStarted_) {
+                    for (auto& [_, pid] : endpointToPlayerId_) {
+                        playerLives_[pid] = lobbyBaseLives_;
+                    }
+                    broadcastRoster();
+                }
+                broadcastLobbyStatus();
+            }
+        }
+        return;
+    }
+
+    if (header->type == rtype::net::MsgType::StartMatch) {
+        auto it = endpointToPlayerId_.find(key);
+        if (it != endpointToPlayerId_.end() && it->second == hostId_) {
+            // Require at least 2 connected players to start
+            if (endpointToPlayerId_.size() >= 2) {
+                // Reset world (remove enemies/bullets/formations)
+                std::vector<rt::ecs::Entity> toDestroy;
+                for (auto& [e, nt] : reg_.storage<rt::game::NetType>().data()) {
+                    if (nt.type != rtype::net::EntityType::Player) toDestroy.push_back(e);
+                }
+                for (auto& [e, f] : reg_.storage<rt::game::Formation>().data()) { (void)f; toDestroy.push_back(e); }
+                for (auto e : toDestroy) { try { reg_.destroy(e); } catch (...) {} }
+                // Reset players: positions, velocities, scores, lives from lobby
+                for (auto& [key2, pid] : endpointToPlayerId_) {
+                    (void)key2;
+                    playerLives_[pid] = std::clamp<std::uint8_t>(lobbyBaseLives_, 1, (std::uint8_t)6);
+                    playerScores_[pid] = 0;
+                    if (auto* t = reg_.get<rt::game::Transform>(pid)) { t->x = 50.f; /* keep Y */ }
+                    if (auto* v = reg_.get<rt::game::Velocity>(pid)) { v->vx = 0.f; v->vy = 0.f; }
+                }
+                lastTeamScore_ = 0;
+                matchStarted_ = true;
+                broadcastRoster();
+                broadcastLobbyStatus();
+                std::cout << "[server] Match started by host id=" << hostId_ << std::endl;
+            }
+        }
+        return;
+    }
 }
 
 void UdpServer::gameLoop() {
@@ -117,6 +193,7 @@ void UdpServer::gameLoop() {
     auto next = clock::now();
     float elapsed = 0.f;
     lastStateSend_ = clock::now();
+    std::cout << "[server] Game loop started, tickRate=" << tickRate << "Hz" << std::endl;
     reg_.addSystem(std::make_unique<rt::game::InputSystem>());
     reg_.addSystem(std::make_unique<rt::game::ShootingSystem>());
     reg_.addSystem(std::make_unique<rt::game::ChargeShootingSystem>());
@@ -127,14 +204,63 @@ void UdpServer::gameLoop() {
     reg_.addSystem(std::make_unique<rt::game::DespawnOutOfBoundsSystem>(-50.f, 1000.f, -50.f, 600.f));
     reg_.addSystem(std::make_unique<rt::game::CollisionSystem>());
     reg_.addSystem(std::make_unique<rt::game::InvincibilitySystem>());
-    reg_.addSystem(std::make_unique<rt::game::FormationSpawnSystem>(rng_, &elapsed));
+    {
+        auto sys = std::make_unique<rt::game::FormationSpawnSystem>(rng_, &elapsed);
+        spawnSys_ = sys.get();
+        // apply initial lobby settings
+        spawnSys_->setDifficulty(lobbyDifficulty_);
+        spawnSys_->setShooterPercent(shooterPercent_);
+        reg_.addSystem(std::move(sys));
+    }
+    auto lastDiag = clock::now();
 
+    bool prevActive = false;
     while (running_) {
         next += std::chrono::duration_cast<clock::duration>(std::chrono::duration<double>(dt));
-        elapsed += static_cast<float>(dt);
-        reg_.update(static_cast<float>(dt));
-        // After systems, handle player hits -> decrement lives and respawn
-        for (auto& [e, inp] : reg_.storage<rt::game::PlayerInput>().data()) {
+        // Determine if a multiplayer match should run
+        bool active = matchStarted_;
+        if (active != prevActive) {
+            std::cout << "[server] Game state -> " << (active ? "ACTIVE (started)" : "WAITING (not started)") << std::endl;
+            if (!active) {
+                // Clean up any existing formations/enemies/bullets so we return to a clean lobby state
+                std::vector<rt::ecs::Entity> toDestroy;
+                for (auto& [e, nt] : reg_.storage<rt::game::NetType>().data()) {
+                    if (nt.type != rtype::net::EntityType::Player) toDestroy.push_back(e);
+                }
+                for (auto& [e, f] : reg_.storage<rt::game::Formation>().data()) { (void)f; toDestroy.push_back(e); }
+                for (auto e : toDestroy) { try { reg_.destroy(e); } catch (...) {} }
+                broadcastLobbyStatus();
+            }
+            prevActive = active;
+        }
+
+        if (active) {
+            elapsed += static_cast<float>(dt);
+            reg_.update(static_cast<float>(dt));
+        }
+        // Periodic diagnostics: only when active (>=2 players)
+        if (active) {
+            auto nowDiag = clock::now();
+            if (std::chrono::duration_cast<std::chrono::milliseconds>(nowDiag - lastDiag).count() > 1000) {
+                std::size_t players = 0, enemies = 0, bullets = 0, formations = 0;
+                for (auto& [e, nt] : reg_.storage<rt::game::NetType>().data()) {
+                    (void)e;
+                    switch (nt.type) {
+                        case rtype::net::EntityType::Player: ++players; break;
+                        case rtype::net::EntityType::Enemy:  ++enemies; break;
+                        case rtype::net::EntityType::Bullet: ++bullets; break;
+                    }
+                }
+                for (auto& [e, f] : reg_.storage<rt::game::Formation>().data()) { (void)e; (void)f; ++formations; }
+                std::cout << "[server] Diag: players=" << players
+                          << " enemies=" << enemies
+                          << " bullets=" << bullets
+                          << " formations=" << formations << std::endl;
+                lastDiag = nowDiag;
+            }
+        }
+        // After systems, handle player hits -> decrement lives and respawn (only during active gameplay)
+        if (active) for (auto& [e, inp] : reg_.storage<rt::game::PlayerInput>().data()) {
             (void)inp;
             if (auto* hf = reg_.get<rt::game::HitFlag>(e)) {
                 if (hf->value) {
@@ -144,26 +270,32 @@ void UdpServer::gameLoop() {
                         playerLives_[e] = lives;
                         broadcastLivesUpdate(e, lives);
                     }
-                    // Respawn player at starting X with preserved Y within bounds
-                    if (auto* t = reg_.get<rt::game::Transform>(e)) {
-                        constexpr float kStartX = 50.f;
-                        constexpr float kWorldH = 600.f;
-                        constexpr float kTopMargin = 56.f;
-                        constexpr float kBottomMargin = 10.f;
-                        float y = t->y;
-                        // Clamp Y to safe region
-                        float maxY = kWorldH - kBottomMargin - 12.f; // approx player height
-                        if (y < kTopMargin) y = kTopMargin;
-                        if (y > maxY) y = maxY;
-                        t->x = kStartX; t->y = y;
-                    }
-                    // Reset velocity
-                    if (auto* v = reg_.get<rt::game::Velocity>(e)) { v->vx = 0.f; v->vy = 0.f; }
-                    // Give a short invincibility if not already
-                    if (auto* inv = reg_.get<rt::game::Invincible>(e)) {
-                        inv->timeLeft = std::max(inv->timeLeft, 1.0f);
+                    if (playerLives_[e] == 0) {
+                        // Eliminate player: despawn their ship and keep connection as spectator
+                        try { reg_.destroy(e); } catch (...) {}
+                        rtype::net::Header hdr{}; hdr.version = rtype::net::ProtocolVersion; hdr.type = rtype::net::MsgType::Despawn; hdr.size = sizeof(std::uint32_t);
+                        std::vector<char> out(sizeof(hdr) + sizeof(std::uint32_t));
+                        std::memcpy(out.data(), &hdr, sizeof(hdr));
+                        std::memcpy(out.data() + sizeof(hdr), &e, sizeof(e));
+                        for (auto& [_, ep] : keyToEndpoint_) doSend(ep, out.data(), out.size());
                     } else {
-                        reg_.emplace<rt::game::Invincible>(e, {1.0f});
+                        // Respawn player at starting X with preserved Y within bounds
+                        if (auto* t = reg_.get<rt::game::Transform>(e)) {
+                            constexpr float kStartX = 50.f;
+                            constexpr float kWorldH = 600.f;
+                            constexpr float kTopMargin = 56.f;
+                            constexpr float kBottomMargin = 10.f;
+                            float y = t->y;
+                            float maxY = kWorldH - kBottomMargin - 12.f; // approx player height
+                            if (y < kTopMargin) y = kTopMargin;
+                            if (y > maxY) y = maxY;
+                            t->x = kStartX; t->y = y;
+                        }
+                        // Reset velocity
+                        if (auto* v = reg_.get<rt::game::Velocity>(e)) { v->vx = 0.f; v->vy = 0.f; }
+                        // Give a short invincibility if not already
+                        if (auto* inv = reg_.get<rt::game::Invincible>(e)) { inv->timeLeft = std::max(inv->timeLeft, 1.0f); }
+                        else { reg_.emplace<rt::game::Invincible>(e, {1.0f}); }
                     }
                     // Clear hit flag for next tick
                     hf->value = false;
@@ -171,7 +303,7 @@ void UdpServer::gameLoop() {
             }
         }
 
-        // After systems, compute team score (sum of all players) and broadcast if changed
+        // After systems, compute team score (sum of all players) and broadcast if changed (only in active gameplay)
         std::int32_t teamScore = 0;
         for (auto& [e, inp] : reg_.storage<rt::game::PlayerInput>().data()) {
             (void)inp;
@@ -180,7 +312,7 @@ void UdpServer::gameLoop() {
                 teamScore += sc->value;
             }
         }
-        if (teamScore != lastTeamScore_) {
+        if (active && teamScore != lastTeamScore_) {
             lastTeamScore_ = teamScore;
             rtype::net::Header hdr{};
             hdr.version = rtype::net::ProtocolVersion;
@@ -193,6 +325,18 @@ void UdpServer::gameLoop() {
             std::memcpy(out.data() + sizeof(hdr), &p, sizeof(p));
             for (const auto& [_, ep] : keyToEndpoint_) doSend(ep, out.data(), out.size());
         }
+        // Check if all players are dead -> end match and broadcast game over
+        if (active) {
+            int alive = 0;
+            for (auto& [pid, lives] : playerLives_) { (void)pid; if (lives > 0) ++alive; }
+            if (alive == 0 && !endpointToPlayerId_.empty()) {
+                matchStarted_ = false;
+                broadcastGameOver(0);
+                broadcastLobbyStatus();
+                std::cout << "[server] All players eliminated. Match ended." << std::endl;
+            }
+        }
+
         checkTimeouts();
         // Throttle world state broadcast to reduce network bursts
         auto now = clock::now();
@@ -239,13 +383,24 @@ void UdpServer::removeClient(const std::string& key) {
     broadcastRoster();
     std::cout << "[server] Removed disconnected client: " << key << "\n";
 
-    // If less than 2 players remain, notify remaining players to return to menu
-    if (endpointToPlayerId_.size() > 0 && endpointToPlayerId_.size() < 2) {
-        rtype::net::Header rtm{0, rtype::net::MsgType::ReturnToMenu, rtype::net::ProtocolVersion};
-        for (auto& [_, ep] : keyToEndpoint_) {
-            doSend(ep, &rtm, sizeof(rtm));
+    // Reassign host if needed
+    if (hostId_ == id) {
+        hostId_ = 0;
+        // Pick the first remaining as new host
+        for (auto& [k2, pid2] : endpointToPlayerId_) { (void)k2; hostId_ = pid2; break; }
+    }
+    // Stop match if less than 2 connected (return to lobby) or no players remain
+    if (endpointToPlayerId_.size() < 2) {
+        if (matchStarted_) {
+            matchStarted_ = false;
+            broadcastLobbyStatus();
+        }
+        if (!endpointToPlayerId_.empty()) {
+            rtype::net::Header rtm{0, rtype::net::MsgType::ReturnToMenu, rtype::net::ProtocolVersion};
+            for (auto& [_, ep] : keyToEndpoint_) doSend(ep, &rtm, sizeof(rtm));
         }
     }
+    if (!endpointToPlayerId_.empty()) broadcastLobbyStatus();
 }
 
 void UdpServer::broadcastState() {
@@ -356,6 +511,34 @@ void UdpServer::broadcastLivesUpdate(std::uint32_t id, std::uint8_t lives) {
     std::memcpy(out.data() + sizeof(hdr), &p, sizeof(p));
     for (const auto& [_, ep] : keyToEndpoint_)
         doSend(ep, out.data(), out.size());
+}
+
+void UdpServer::broadcastLobbyStatus() {
+    rtype::net::Header hdr{};
+    hdr.version = rtype::net::ProtocolVersion;
+    hdr.type = rtype::net::MsgType::LobbyStatus;
+    hdr.size = sizeof(rtype::net::LobbyStatusPayload);
+    rtype::net::LobbyStatusPayload p{};
+    p.hostId = hostId_;
+    p.baseLives = std::clamp<std::uint8_t>(lobbyBaseLives_, 1, (std::uint8_t)6);
+    p.difficulty = std::clamp<std::uint8_t>(lobbyDifficulty_, (std::uint8_t)0, (std::uint8_t)2);
+    p.started = matchStarted_ ? 1 : 0;
+    std::array<char, sizeof(hdr) + sizeof(p)> out{};
+    std::memcpy(out.data(), &hdr, sizeof(hdr));
+    std::memcpy(out.data() + sizeof(hdr), &p, sizeof(p));
+    for (const auto& [_, ep] : keyToEndpoint_) doSend(ep, out.data(), out.size());
+}
+
+void UdpServer::broadcastGameOver(std::uint8_t reason) {
+    rtype::net::Header hdr{};
+    hdr.version = rtype::net::ProtocolVersion;
+    hdr.type = rtype::net::MsgType::GameOver;
+    hdr.size = sizeof(rtype::net::GameOverPayload);
+    rtype::net::GameOverPayload p{reason};
+    std::array<char, sizeof(hdr) + sizeof(p)> out{};
+    std::memcpy(out.data(), &hdr, sizeof(hdr));
+    std::memcpy(out.data() + sizeof(hdr), &p, sizeof(p));
+    for (const auto& [_, ep] : keyToEndpoint_) doSend(ep, out.data(), out.size());
 }
 
 void UdpServer::doSend(const asio::ip::udp::endpoint& to, const void* data, std::size_t size) {

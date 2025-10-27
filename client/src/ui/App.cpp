@@ -13,6 +13,14 @@ static void drawStarfield(float t) {
 
 App::App() : _screen(ScreenState::Menu) {}
 
+void App::setAutoConnect(const std::string& host, const std::string& port, const std::string& name) {
+    _form.serverAddress = host;
+    _form.serverPort = port;
+    _form.username = name;
+    _autoConnectPending = true;
+    _screen = ScreenState::Multiplayer;
+}
+
 void App::run() {
     const int screenWidth = 960;
     const int screenHeight = 540;
@@ -21,6 +29,14 @@ void App::run() {
     // Prevent ESC from closing the whole window; we handle ESC ourselves
     SetExitKey(KEY_NULL);
     SetTargetFPS(60);
+
+    _screens.loadBackground();
+
+    // If CLI requested autoconnect, attempt it once after window init
+    if (_autoConnectPending) {
+        (void)_screens.autoConnect(_screen, _form);
+        _autoConnectPending = false;
+    }
 
     float t = 0.f;
     while (!WindowShouldClose() && _screen != ScreenState::Exiting) {
@@ -39,7 +55,11 @@ void App::run() {
 
         BeginDrawing();
         ClearBackground(BLACK);
-        drawStarfield(t);
+        if (_screens.hasBackground()) {
+            _screens.drawBackground(dt);
+        } else {
+            drawStarfield(t);
+        }
 
         switch (_screen) {
             case ScreenState::Menu: _screens.drawMenu(_screen); break;

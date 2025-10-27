@@ -1,0 +1,189 @@
+pipeline {
+  agent {
+    docker {
+      image 'debian:bookworm'
+      args '-u root:root --privileged'
+    }
+  }
+
+  parameters {
+    // Repo/branch to document
+    string(name: 'SOURCE_REPO', defaultValue: 'https://github.com/Aincrad-Flux/RType.git', description: 'URL of the repo to clone for setup')
+    string(name: 'BRANCH_NAME', defaultValue: 'main', description: 'Branch to build documentation from')
+
+    // Deployment target
+      string(name: 'VM_HOST', defaultValue: '', description: 'Target VM hostname or IP (required)')
+      string(name: 'VM_PORT', defaultValue: '22', description: 'SSH port of the VM')
+      string(name: 'VM_SSH_CREDENTIALS', defaultValue: 'vm-ssh-key', description: 'Jenkins credentialsId for SSH private key')
+      string(name: 'VM_USER', defaultValue: '', description: 'Remote username (optional; if empty, use username from credentials)')
+      string(name: 'REMOTE_PATH', defaultValue: '/opt/rtype-docs', description: 'Remote path to deploy HTML docs (must be writable by remote user)')
+
+      // Local HTTP preview on the VM
+      string(name: 'LOCAL_PORT', defaultValue: '8080', description: 'Localhost port to serve docs on the VM')
+      string(name: 'BIND_ADDRESS', defaultValue: '127.0.0.1', description: 'Bind address for the local HTTP server (keep 127.0.0.1 for localhost)')
+      choice(name: 'SERVER_TYPE', choices: ['auto', 'python', 'node'], description: 'Simple server to use: python http.server or Node http-server (auto tries python then node)')
+      booleanParam(name: 'KILL_EXISTING', defaultValue: true, description: 'Stop any existing docs server on the same port before starting')
+
+    // Remote provisioning flags
+    booleanParam(name: 'INSTALL_NGINX', defaultValue: true, description: 'Install Nginx on the VM if not present')
+    booleanParam(name: 'USE_SUDO', defaultValue: true, description: 'Use sudo for remote provisioning (requires passwordless sudo)')
+  }
+
+  environment {
+    DOCS_OUT = 'build-docs/doxygen'
+    DOXYFILE = 'Doxyfile'
+  }
+
+  stages {
+    stage('Clone Repository') {
+      steps {
+        script {
+          if (!params.VM_HOST?.trim()) {
+            error 'VM_HOST is required to deploy documentation.'
+          }
+        }
+        echo "Cloning branch: ${params.BRANCH_NAME} from ${params.SOURCE_REPO}"
+        git branch: "${params.BRANCH_NAME}",
+          url: "${params.SOURCE_REPO}",
+          credentialsId: 'github-https-token'
+      }
+    }
+
+    stage('Install Build & SSH Tools') {
+      steps {
+        sh label: 'Install doxygen, graphviz, rsync, ssh client', script: '''
+set -eu
+apt-get update
+apt-get install -y doxygen graphviz git rsync openssh-client
+
+echo "Doxygen version:" && doxygen -v || true
+rsync --version | head -n1 || true
+ssh -V || true
+'''
+      }
+    }
+
+    stage('Configure Doxygen') {
+      steps {
+        sh label: 'Generate and tune Doxyfile', script: '''
+set -eu
+
+# Generate a default Doxyfile if none exists in the repo
+if [ ! -f "$DOXYFILE" ]; then
+  doxygen -g "$DOXYFILE"
+fi
+
+# Ensure output directory exists
+mkdir -p "$DOCS_OUT"
+
+# Update Doxyfile with project-specific settings
+sed -i.bak \
+  -e "s|^PROJECT_NAME .*|PROJECT_NAME = \"RType\"|" \
+  -e "s|^OUTPUT_DIRECTORY .*|OUTPUT_DIRECTORY = $DOCS_OUT|" \
+  -e "s|^GENERATE_LATEX .*|GENERATE_LATEX = NO|" \
+  -e "s|^GENERATE_XML .*|GENERATE_XML = NO|" \
+  -e "s|^RECURSIVE .*|RECURSIVE = YES|" \
+  -e "s|^EXTRACT_ALL .*|EXTRACT_ALL = YES|" \
+  -e "s|^QUIET .*|QUIET = YES|" \
+  -e "s|^WARN_IF_UNDOCUMENTED .*|WARN_IF_UNDOCUMENTED = NO|" \
+  -e "s|^GENERATE_TREEVIEW .*|GENERATE_TREEVIEW = YES|" \
+  "$DOXYFILE"
+
+if ! grep -q '^INPUT[[:space:]]*=' "$DOXYFILE"; then
+  echo "INPUT = client server common engine docs" >> "$DOXYFILE"
+else
+  sed -i -e "s|^INPUT[[:space:]]*=.*|INPUT = client server common engine docs|" "$DOXYFILE"
+fi
+
+ LOCAL_PORT="${params.LOCAL_PORT}"
+ BIND_ADDRESS="${params.BIND_ADDRESS}"
+ SERVER_TYPE="${params.SERVER_TYPE}"
+ KILL_EXISTING="${params.KILL_EXISTING}"
+else
+  sed -i -e "s|^FILE_PATTERNS[[:space:]]*=.*|FILE_PATTERNS = *.h *.hh *.hpp *.hxx *.c *.cc *.cpp *.cxx *.md *.markdown|" "$DOXYFILE"
+fi
+
+if [ -f docs/README.md ]; then
+ ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" -p "$VM_PORT" "$REMOTE_USER@$VM_HOST" \
+   "set -eu; mkdir -p '$REMOTE_PATH'"
+      steps {
+        sh label: 'Run doxygen', script: '''
+set -eu
+doxygen "$DOXYFILE"
+
+# Sanity check
+if [ ! -f "$DOCS_OUT/html/index.html" ]; then
+  echo 'Documentation generation failed: index.html not found.'
+  exit 1
+fi
+
+ls -lh "$DOCS_OUT/html" | head -n 50 || true
+'''
+      }
+    }
+
+    stage('Deploy to VM') {
+      steps {
+        withCredentials([sshUserPrivateKey(credentialsId: params.VM_SSH_CREDENTIALS, keyFileVariable: 'SSH_KEY', usernameVariable: 'CRED_USER')]) {
+          sh label: 'Upload HTML via rsync and provision Nginx (optional)', script: """
+set -eu
+
+VM_HOST="${params.VM_HOST}"
+VM_PORT="${params.VM_PORT}"
+VM_USER_PARAM="${params.VM_USER}"
+REMOTE_PATH="${params.REMOTE_PATH}"
+INSTALL_NGINX="${params.INSTALL_NGINX}"
+USE_SUDO="${params.USE_SUDO}"
+
+# Prefer provided VM_USER, fallback to credential username
+REMOTE_USER="${params.VM_USER?.trim() ? params.VM_USER : '$CRED_USER'}"
+
+SSH_OPTS="-i \"$SSH_KEY\" -p \"$VM_PORT\" -o StrictHostKeyChecking=no"
+SUDO=""
+if [ "$USE_SUDO" = "true" ]; then
+  SUDO="sudo -n "
+fi
+
+# Optional: install and enable Nginx, and prep remote directory
+if [ "$INSTALL_NGINX" = "true" ]; then
+  ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" -p "$VM_PORT" "$REMOTE_USER@$VM_HOST" \
+    "set -eu; if ! command -v nginx >/dev/null 2>&1; then ${'$'}{SUDO}apt-get update && ${'$'}{SUDO}apt-get install -y nginx; fi; ${'$'}{SUDO}mkdir -p '$REMOTE_PATH'"
+else
+  ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" -p "$VM_PORT" "$REMOTE_USER@$VM_HOST" \
+    "set -eu; mkdir -p '$REMOTE_PATH'"
+fi
+
+# Ensure we can write into the target dir (if created with sudo)
+ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" -p "$VM_PORT" "$REMOTE_USER@$VM_HOST" \
+  "set -eu; if [ -w '$REMOTE_PATH' ]; then exit 0; else ${'$'}{SUDO}chown -R '$REMOTE_USER':'$REMOTE_USER' '$REMOTE_PATH' || true; fi"
+
+# Sync the static HTML to the remote path
+rsync -az --delete -e "ssh $SSH_OPTS" "$DOCS_OUT/html/" "$REMOTE_USER@$VM_HOST:$REMOTE_PATH/"
+
+# Try to reload Nginx gracefully if installed
+if [ "$INSTALL_NGINX" = "true" ]; then
+  ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" -p "$VM_PORT" "$REMOTE_USER@$VM_HOST" \
+    "${'$'}{SUDO}systemctl reload nginx || ${'$'}{SUDO}service nginx reload || ${'$'}{SUDO}nginx -s reload || true"
+fi
+
+# Show remote listing for verification
+ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" -p "$VM_PORT" "$REMOTE_USER@$VM_HOST" \
+  "set -eu; ls -lah '$REMOTE_PATH' | head -n 50 || true"
+"""
+        }
+      }
+    }
+  }
+
+  post {
+    success {
+      echo 'Doxygen documentation deployed to VM.'
+    }
+    failure {
+      echo 'Deployment failed.'
+    }
+    always {
+      cleanWs()
+    }
+  }
+}

@@ -54,6 +54,8 @@ public:
     void drawMenu(ScreenState& screen);
     void drawSingleplayer(ScreenState& screen, SingleplayerForm& form);
     void drawMultiplayer(ScreenState& screen, MultiplayerForm& form);
+    // Programmatic connect to multiplayer using the provided form
+    bool autoConnect(ScreenState& screen, MultiplayerForm& form);
     void drawWaiting(ScreenState& screen);
     void drawGameplay(ScreenState& screen);
     void drawOptions();
@@ -65,6 +67,14 @@ public:
     // Release GPU textures (must be called before closing the window)
     void unloadGraphics();
     ~Screens();
+    // Draw global background if available (fills the window keeping aspect ratio)
+    void drawBackground(float dt);
+    // Attempt to load background once (safe to call multiple times)
+    void loadBackground();
+    // Whether a background texture is currently loaded
+    bool hasBackground() const { return _backgroundLoaded; }
+    // Allow changing scroll speed (pixels per second in scaled space)
+    void setBackgroundSpeed(float pxPerSec) { _bgSpeed = pxPerSec; }
 private:
     // --- Local Singleplayer test (engine sandbox) ---
     void initSingleplayerWorld();
@@ -139,6 +149,8 @@ private:
     void teardownNet();
     void sendDisconnect();
     void sendInput(std::uint8_t bits);
+    void sendLobbyConfig(std::uint8_t difficulty, std::uint8_t baseLives);
+    void sendStartMatch();
     void pumpNetworkOnce();
     // Block for a short time waiting for HelloAck on current UDP socket; also feeds other packets
     bool waitHelloAck(double timeoutSec);
@@ -178,6 +190,11 @@ private:
         std::uint32_t _localPlayerId = 0; // received from Roster
         bool _haveLocalId = false;
     bool _gameOver = false; // set when our lives reach 0
+    // Lobby/match state
+    std::uint32_t _hostId = 0;
+    std::uint8_t _lobbyBaseLives = 4;   // 1..6
+    std::uint8_t _lobbyDifficulty = 1;  // 0..2
+    bool _lobbyStarted = false;
 
     // --- Client-side charge beam (Alt + Space) ---
     bool _isCharging = false;
@@ -191,6 +208,12 @@ private:
     // --- Shot mode toggle (Normal vs Charge), switched with Ctrl key ---
     enum class ShotMode { Normal = 0, Charge = 1 };
     ShotMode _shotMode = ShotMode::Normal;
+
+    // --- Global background texture ---
+    Texture2D _background{};
+    bool _backgroundLoaded = false;
+    float _bgScrollX = 0.0f; // accumulated scroll offset in pixels (scaled)
+    float _bgSpeed = 60.0f;  // pixels per second, scrolling to the left
 };
 
 } // namespace ui

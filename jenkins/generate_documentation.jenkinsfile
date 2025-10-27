@@ -1,0 +1,141 @@
+pipeline {
+  agent {
+    docker {
+      image 'debian:bookworm'
+      args '-u root:root --privileged'
+    }
+  }
+
+  parameters {
+    string(name: 'SOURCE_REPO', defaultValue: 'https://github.com/Aincrad-Flux/RType.git', description: 'URL of the repo to clone for setup')
+    string(name: 'BRANCH_NAME', defaultValue: 'main', description: 'Branch to build documentation from')
+  }
+
+  environment {
+    DOCS_OUT = 'build-docs/doxygen'
+    DOXYFILE = 'Doxyfile'
+  }
+
+  stages {
+    stage('Clone Repository') {
+      steps {
+        echo "Cloning branch: ${params.BRANCH_NAME} from ${params.SOURCE_REPO}"
+        git branch: "${params.BRANCH_NAME}",
+          url: "${params.SOURCE_REPO}",
+          credentialsId: 'github-https-token'
+      }
+    }
+
+    stage('Install Dependencies') {
+      steps {
+        sh label: 'Install Doxygen and Graphviz', script: '''
+set -eu
+apt-get update
+apt-get install -y doxygen graphviz git
+
+echo "Doxygen version:" && doxygen -v || true
+'''
+      }
+    }
+
+    stage('Configure Doxygen') {
+      steps {
+        sh label: 'Generate and tune Doxyfile', script: '''
+set -eu
+
+# Generate a default Doxyfile if none exists in the repo
+if [ ! -f "$DOXYFILE" ]; then
+  doxygen -g "$DOXYFILE"
+fi
+
+# Ensure output directory exists
+mkdir -p "$DOCS_OUT"
+
+# Update Doxyfile with project-specific settings
+# Use sed with backup to be safe in CI environments
+sed -i.bak \
+  -e "s|^PROJECT_NAME .*|PROJECT_NAME = \"RType\"|" \
+  -e "s|^OUTPUT_DIRECTORY .*|OUTPUT_DIRECTORY = $DOCS_OUT|" \
+  -e "s|^GENERATE_LATEX .*|GENERATE_LATEX = NO|" \
+  -e "s|^GENERATE_XML .*|GENERATE_XML = NO|" \
+  -e "s|^RECURSIVE .*|RECURSIVE = YES|" \
+  -e "s|^EXTRACT_ALL .*|EXTRACT_ALL = YES|" \
+  -e "s|^QUIET .*|QUIET = YES|" \
+  -e "s|^WARN_IF_UNDOCUMENTED .*|WARN_IF_UNDOCUMENTED = NO|" \
+  -e "s|^GENERATE_TREEVIEW .*|GENERATE_TREEVIEW = YES|" \
+  "$DOXYFILE"
+
+# Compose INPUT and FILE_PATTERNS to cover C++ and Markdown
+# Prefer preserving existing INPUT if the repo already has a configured Doxyfile
+if ! grep -q '^INPUT[[:space:]]*=' "$DOXYFILE"; then
+  echo "INPUT = client server common engine docs" >> "$DOXYFILE"
+else
+  # Replace INPUT line entirely to ensure we include key directories
+  sed -i \
+    -e "s|^INPUT[[:space:]]*=.*|INPUT = client server common engine docs|" \
+    "$DOXYFILE"
+fi
+
+if ! grep -q '^FILE_PATTERNS[[:space:]]*=' "$DOXYFILE"; then
+  echo "FILE_PATTERNS = *.h *.hh *.hpp *.hxx *.c *.cc *.cpp *.cxx *.md *.markdown" >> "$DOXYFILE"
+else
+  sed -i \
+    -e "s|^FILE_PATTERNS[[:space:]]*=.*|FILE_PATTERNS = *.h *.hh *.hpp *.hxx *.c *.cc *.cpp *.cxx *.md *.markdown|" \
+    "$DOXYFILE"
+fi
+
+# If there's a docs/README.md, use it as the main page
+if [ -f docs/README.md ]; then
+  if ! grep -q '^USE_MDFILE_AS_MAINPAGE[[:space:]]*=' "$DOXYFILE"; then
+    echo "USE_MDFILE_AS_MAINPAGE = docs/README.md" >> "$DOXYFILE"
+  else
+    sed -i -e "s|^USE_MDFILE_AS_MAINPAGE[[:space:]]*=.*|USE_MDFILE_AS_MAINPAGE = docs/README.md|" "$DOXYFILE"
+  fi
+fi
+
+# Make sure HTML is enabled (it is by default, but enforce)
+sed -i -e "s|^GENERATE_HTML[[:space:]]*=.*|GENERATE_HTML = YES|" "$DOXYFILE"
+
+# Show the effective snippets for debugging (portable for /bin/sh)
+grep -E '^(PROJECT_NAME|OUTPUT_DIRECTORY|INPUT|FILE_PATTERNS|RECURSIVE|GENERATE_HTML|GENERATE_TREEVIEW|USE_MDFILE_AS_MAINPAGE)' "$DOXYFILE" || true
+'''
+      }
+    }
+
+    stage('Generate Documentation') {
+      steps {
+        sh label: 'Run doxygen', script: '''
+set -eu
+doxygen "$DOXYFILE"
+
+# Sanity check
+if [ ! -f "$DOCS_OUT/html/index.html" ]; then
+  echo 'Documentation generation failed: index.html not found.'
+  exit 1
+fi
+
+# List a few output files for logs
+ls -lh "$DOCS_OUT/html" | head -n 50 || true
+'''
+      }
+    }
+
+    stage('Archive Documentation') {
+      steps {
+        archiveArtifacts artifacts: "${DOCS_OUT}/html/**", fingerprint: true, allowEmptyArchive: false
+      }
+    }
+  }
+
+  post {
+    success {
+      echo 'Doxygen documentation generated and archived.'
+    }
+    failure {
+      echo 'Documentation generation failed.'
+    }
+    always {
+      cleanWs()
+    }
+  }
+}

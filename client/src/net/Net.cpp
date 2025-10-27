@@ -79,6 +79,30 @@ void Screens::sendInput(std::uint8_t bits) {
     g.sock->send_to(asio::buffer(buf), g.server);
 }
 
+void Screens::sendLobbyConfig(std::uint8_t difficulty, std::uint8_t baseLives) {
+    if (!g.sock) return;
+    rtype::net::Header hdr{};
+    hdr.version = rtype::net::ProtocolVersion;
+    hdr.type = rtype::net::MsgType::LobbyConfig;
+    rtype::net::LobbyConfigPayload p{ baseLives, difficulty };
+    hdr.size = sizeof(p);
+    std::array<char, sizeof(hdr) + sizeof(p)> buf{};
+    std::memcpy(buf.data(), &hdr, sizeof(hdr));
+    std::memcpy(buf.data() + sizeof(hdr), &p, sizeof(p));
+    g.sock->send_to(asio::buffer(buf), g.server);
+}
+
+void Screens::sendStartMatch() {
+    if (!g.sock) return;
+    rtype::net::Header hdr{};
+    hdr.version = rtype::net::ProtocolVersion;
+    hdr.type = rtype::net::MsgType::StartMatch;
+    hdr.size = 0;
+    std::array<char, sizeof(rtype::net::Header)> buf{};
+    std::memcpy(buf.data(), &hdr, sizeof(hdr));
+    g.sock->send_to(asio::buffer(buf), g.server);
+}
+
 void Screens::pumpNetworkOnce() {
     if (!g.sock) return;
     for (int i = 0; i < 8; ++i) {
@@ -111,6 +135,41 @@ bool Screens::waitHelloAck(double timeoutSec) {
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     return false;
+}
+
+bool Screens::autoConnect(ScreenState& screen, MultiplayerForm& form) {
+    bool canConnect = !form.username.empty() && !form.serverAddress.empty() && !form.serverPort.empty();
+    if (!canConnect) {
+        _statusMessage = std::string("Missing host/port/name for autoconnect.");
+        return false;
+    }
+    try {
+        _username = form.username;
+        _serverAddr = form.serverAddress;
+        _serverPort = form.serverPort;
+        _selfId = 0;
+        _playerLives = 4;
+        _gameOver = false;
+        _otherPlayers.clear();
+        teardownNet();
+        ensureNetSetup();
+        bool ok = waitHelloAck(1.0);
+        if (ok) {
+            _statusMessage = std::string("Player Connected.");
+            _connected = true;
+            screen = ScreenState::Waiting;
+            return true;
+        } else {
+            _statusMessage = std::string("Connection failed.");
+            teardownNet();
+            return false;
+        }
+    } catch (const std::exception& e) {
+        logMessage(std::string("Exception: ") + e.what(), "ERROR");
+        _statusMessage = std::string("Error: ") + e.what();
+        teardownNet();
+        return false;
+    }
 }
 
 } } // namespace client::ui
