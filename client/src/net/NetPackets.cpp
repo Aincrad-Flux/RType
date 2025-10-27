@@ -2,6 +2,8 @@
 #include "common/Protocol.hpp"
 #include <algorithm>
 #include <cstring>
+#include <chrono>
+#include <iostream>
 
 namespace client { namespace ui {
 
@@ -19,6 +21,7 @@ void Screens::handleNetPacket(const char* data, std::size_t n) {
         _entities.clear();
         _entities.reserve(count);
         auto* arr = reinterpret_cast<const rtype::net::PackedEntity*>(p);
+        std::size_t players = 0, enemies = 0, bullets = 0;
         for (std::size_t i = 0; i < count; ++i) {
             PackedEntity e{};
             e.id = arr[i].id;
@@ -26,6 +29,17 @@ void Screens::handleNetPacket(const char* data, std::size_t n) {
             e.x = arr[i].x; e.y = arr[i].y; e.vx = arr[i].vx; e.vy = arr[i].vy;
             e.rgba = arr[i].rgba;
             _entities.push_back(e);
+            if (e.type == 1) ++players; else if (e.type == 2) ++enemies; else if (e.type == 3) ++bullets;
+        }
+        // Debug print: throttle to ~1/sec
+        static auto last = std::chrono::steady_clock::now();
+        auto now = std::chrono::steady_clock::now();
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(now - last).count() > 1000) {
+            std::cout << "[client] State: total=" << count
+                      << " players=" << players
+                      << " enemies=" << enemies
+                      << " bullets=" << bullets << std::endl;
+            last = now;
         }
     } else if (h->type == rtype::net::MsgType::Roster) {
         const char* p = data + sizeof(rtype::net::Header);

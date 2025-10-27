@@ -53,6 +53,13 @@ void UdpServer::handlePacket(const asio::ip::udp::endpoint& from, const char* da
     std::size_t payloadSize = size - sizeof(rtype::net::Header);
     auto key = makeKey(from);
     lastSeen_[key] = std::chrono::steady_clock::now();
+    // Debug: trace incoming packet types
+    switch (header->type) {
+        case rtype::net::MsgType::Hello: std::cout << "[server] RX Hello from " << key << std::endl; break;
+        case rtype::net::MsgType::Input: break; // too chatty
+        case rtype::net::MsgType::Disconnect: std::cout << "[server] RX Disconnect from " << key << std::endl; break;
+        default: std::cout << "[server] RX type=" << (int)header->type << " from " << key << std::endl; break;
+    }
 
     if (header->type == rtype::net::MsgType::Hello) {
         keyToEndpoint_[key] = from;
@@ -83,6 +90,8 @@ void UdpServer::handlePacket(const asio::ip::udp::endpoint& from, const char* da
             playerNames_[e] = uname;
             // Send roster immediately on new join
             broadcastRoster();
+            std::cout << "[server] Player joined: id=" << e << " name='" << playerNames_[e]
+                      << "' totalPlayers=" << endpointToPlayerId_.size() << std::endl;
         }
         rtype::net::Header ack{0, rtype::net::MsgType::HelloAck, rtype::net::ProtocolVersion};
         doSend(from, &ack, sizeof(ack));
@@ -117,6 +126,7 @@ void UdpServer::gameLoop() {
     auto next = clock::now();
     float elapsed = 0.f;
     lastStateSend_ = clock::now();
+    std::cout << "[server] Game loop started, tickRate=" << tickRate << "Hz" << std::endl;
     reg_.addSystem(std::make_unique<rt::game::InputSystem>());
     reg_.addSystem(std::make_unique<rt::game::ShootingSystem>());
     reg_.addSystem(std::make_unique<rt::game::ChargeShootingSystem>());
@@ -128,13 +138,52 @@ void UdpServer::gameLoop() {
     reg_.addSystem(std::make_unique<rt::game::CollisionSystem>());
     reg_.addSystem(std::make_unique<rt::game::InvincibilitySystem>());
     reg_.addSystem(std::make_unique<rt::game::FormationSpawnSystem>(rng_, &elapsed));
+    auto lastDiag = clock::now();
 
+    bool prevActive = false;
     while (running_) {
         next += std::chrono::duration_cast<clock::duration>(std::chrono::duration<double>(dt));
-        elapsed += static_cast<float>(dt);
-        reg_.update(static_cast<float>(dt));
-        // After systems, handle player hits -> decrement lives and respawn
-        for (auto& [e, inp] : reg_.storage<rt::game::PlayerInput>().data()) {
+        // Determine if a multiplayer match should run (need at least 2 players)
+        bool active = endpointToPlayerId_.size() >= 2;
+        if (active != prevActive) {
+            std::cout << "[server] Game state -> " << (active ? "ACTIVE (>=2 players)" : "WAITING (<2 players)") << std::endl;
+            if (!active) {
+                // Clean up any existing formations/enemies/bullets so we return to a clean lobby state
+                std::vector<rt::ecs::Entity> toDestroy;
+                for (auto& [e, nt] : reg_.storage<rt::game::NetType>().data()) {
+                    if (nt.type != rtype::net::EntityType::Player) toDestroy.push_back(e);
+                }
+                for (auto& [e, f] : reg_.storage<rt::game::Formation>().data()) { (void)f; toDestroy.push_back(e); }
+                for (auto e : toDestroy) { try { reg_.destroy(e); } catch (...) {} }
+            }
+            prevActive = active;
+        }
+
+        if (active) {
+            elapsed += static_cast<float>(dt);
+            reg_.update(static_cast<float>(dt));
+        }
+        // Periodic diagnostics: count entities by type once per second
+        auto nowDiag = clock::now();
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(nowDiag - lastDiag).count() > 1000) {
+            std::size_t players = 0, enemies = 0, bullets = 0, formations = 0;
+            for (auto& [e, nt] : reg_.storage<rt::game::NetType>().data()) {
+                (void)e;
+                switch (nt.type) {
+                    case rtype::net::EntityType::Player: ++players; break;
+                    case rtype::net::EntityType::Enemy:  ++enemies; break;
+                    case rtype::net::EntityType::Bullet: ++bullets; break;
+                }
+            }
+            for (auto& [e, f] : reg_.storage<rt::game::Formation>().data()) { (void)e; (void)f; ++formations; }
+            std::cout << "[server] Diag: players=" << players
+                      << " enemies=" << enemies
+                      << " bullets=" << bullets
+                      << " formations=" << formations << std::endl;
+            lastDiag = nowDiag;
+        }
+        // After systems, handle player hits -> decrement lives and respawn (only during active gameplay)
+        if (active) for (auto& [e, inp] : reg_.storage<rt::game::PlayerInput>().data()) {
             (void)inp;
             if (auto* hf = reg_.get<rt::game::HitFlag>(e)) {
                 if (hf->value) {
@@ -171,7 +220,7 @@ void UdpServer::gameLoop() {
             }
         }
 
-        // After systems, compute team score (sum of all players) and broadcast if changed
+        // After systems, compute team score (sum of all players) and broadcast if changed (only in active gameplay)
         std::int32_t teamScore = 0;
         for (auto& [e, inp] : reg_.storage<rt::game::PlayerInput>().data()) {
             (void)inp;
@@ -180,7 +229,7 @@ void UdpServer::gameLoop() {
                 teamScore += sc->value;
             }
         }
-        if (teamScore != lastTeamScore_) {
+        if (active && teamScore != lastTeamScore_) {
             lastTeamScore_ = teamScore;
             rtype::net::Header hdr{};
             hdr.version = rtype::net::ProtocolVersion;

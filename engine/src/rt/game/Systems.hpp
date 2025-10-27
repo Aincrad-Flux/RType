@@ -73,6 +73,12 @@ class FormationSpawnSystem : public rt::ecs::System {
     std::mt19937& rng_;
     float timer_ = 0.f;
     float* t_;
+    // Internal helpers to create formations
+    rt::ecs::Entity spawnSnake(rt::ecs::Registry& r, float y, int count);
+    rt::ecs::Entity spawnLine(rt::ecs::Registry& r, float y, int count);
+    rt::ecs::Entity spawnGrid(rt::ecs::Registry& r, float y, int rows, int cols);
+    rt::ecs::Entity spawnTriangle(rt::ecs::Registry& r, float y, int rows);
+    rt::ecs::Entity spawnBigShooters(rt::ecs::Registry& r, float y, int count);
 };
 
 class CollisionSystem : public rt::ecs::System {

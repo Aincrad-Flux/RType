@@ -3,6 +3,7 @@
 #include <random>
 #include <limits>
 #include <vector>
+#include <iostream>
 #include "rt/game/Systems.hpp"
 using namespace rt::game;
 
@@ -374,6 +375,7 @@ void FormationSpawnSystem::update(rt::ecs::Registry& r, float dt) {
             std::uniform_real_distribution<float> ydist(minY, maxY);
             y = ydist(rng_);
             spawnSnake(r, y, 6);
+            std::cout << "[server] Spawn formation: Snake y=" << y << " count=6" << std::endl;
             break;
         }
         case 1: {
@@ -383,6 +385,7 @@ void FormationSpawnSystem::update(rt::ecs::Registry& r, float dt) {
             std::uniform_real_distribution<float> ydist(minY, maxY);
             y = ydist(rng_);
             spawnLine(r, y, 8);
+            std::cout << "[server] Spawn formation: Line y=" << y << " count=8" << std::endl;
             break;
         }
         case 2: {
@@ -395,6 +398,7 @@ void FormationSpawnSystem::update(rt::ecs::Registry& r, float dt) {
             std::uniform_real_distribution<float> ydist(minY, maxY);
             y = ydist(rng_);
             spawnGrid(r, y, rows, cols);
+            std::cout << "[server] Spawn formation: Grid y=" << y << " rows=" << rows << " cols=" << cols << std::endl;
             break;
         }
         case 3: {
@@ -407,6 +411,7 @@ void FormationSpawnSystem::update(rt::ecs::Registry& r, float dt) {
             std::uniform_real_distribution<float> ydist(minY, maxY);
             y = ydist(rng_);
             spawnTriangle(r, y, rows);
+            std::cout << "[server] Spawn formation: Triangle y=" << y << " rows=" << rows << std::endl;
             break;
         }
         case 4: {
@@ -416,9 +421,13 @@ void FormationSpawnSystem::update(rt::ecs::Registry& r, float dt) {
             std::uniform_real_distribution<float> ydist(minY, maxY);
             y = ydist(rng_);
             spawnBigShooters(r, y, 3);
+            std::cout << "[server] Spawn formation: BigShooters y=" << y << " count=3" << std::endl;
             break;
         }
-        default: spawnLine(r, y, 6); break;
+        default:
+            spawnLine(r, y, 6);
+            std::cout << "[server] Spawn formation: Line (default) y=" << y << " count=6" << std::endl;
+            break;
     }
 }
 
