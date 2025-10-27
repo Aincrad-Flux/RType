@@ -248,6 +248,7 @@ rt::ecs::Entity FormationSpawnSystem::spawnSnake(rt::ecs::Registry& r, float y, 
     r.emplace<Transform>(origin, {980.f, y});
     r.emplace<Velocity>(origin, {-60.f, 0.f});
     r.emplace<Formation>(origin, {FormationType::Snake, -60.f, 70.f, 2.5f, 36.f, 0, 0});
+    std::uniform_int_distribution<int> chance(0, 99);
     for (int i = 0; i < count; ++i) {
         auto e = r.create();
         r.emplace<Transform>(e, {980.f + i * 36.f, y});
@@ -257,6 +258,11 @@ rt::ecs::Entity FormationSpawnSystem::spawnSnake(rt::ecs::Registry& r, float y, 
         r.emplace<EnemyTag>(e, {});
         r.emplace<Size>(e, {27.f, 18.f});
         r.emplace<FormationFollower>(e, {origin, static_cast<std::uint16_t>(i), i * 36.f, 0.f});
+        if (chance(rng_) < (int)shooterPercent_) {
+            // attach enemy shooter with interval scaled by difficulty
+            float interval = (difficulty_ == 2 ? 0.9f : difficulty_ == 1 ? 1.2f : 1.6f);
+            r.emplace<EnemyShooter>(e, EnemyShooter{0.f, interval, 240.f, 0.65f});
+        }
     }
     return origin;
 }
@@ -266,6 +272,7 @@ rt::ecs::Entity FormationSpawnSystem::spawnLine(rt::ecs::Registry& r, float y, i
     r.emplace<Transform>(origin, {980.f, y});
     r.emplace<Velocity>(origin, {-60.f, 0.f});
     r.emplace<Formation>(origin, {FormationType::Line, -60.f, 0.f, 0.f, 40.f, 0, 0});
+    std::uniform_int_distribution<int> chance(0, 99);
     for (int i = 0; i < count; ++i) {
         auto e = r.create();
         r.emplace<Transform>(e, {980.f + i * 40.f, y});
@@ -275,6 +282,10 @@ rt::ecs::Entity FormationSpawnSystem::spawnLine(rt::ecs::Registry& r, float y, i
         r.emplace<EnemyTag>(e, {});
         r.emplace<Size>(e, {27.f, 18.f});
         r.emplace<FormationFollower>(e, {origin, static_cast<std::uint16_t>(i), i * 40.f, 0.f});
+        if (chance(rng_) < (int)shooterPercent_) {
+            float interval = (difficulty_ == 2 ? 0.9f : difficulty_ == 1 ? 1.2f : 1.6f);
+            r.emplace<EnemyShooter>(e, EnemyShooter{0.f, interval, 240.f, 0.62f});
+        }
     }
     return origin;
 }
@@ -284,6 +295,7 @@ rt::ecs::Entity FormationSpawnSystem::spawnGrid(rt::ecs::Registry& r, float y, i
     r.emplace<Transform>(origin, {980.f, y});
     r.emplace<Velocity>(origin, {-50.f, 0.f});
     r.emplace<Formation>(origin, {FormationType::GridRect, -50.f, 0.f, 0.f, 36.f, rows, cols});
+    std::uniform_int_distribution<int> chance(0, 99);
     for (int rr = 0; rr < rows; ++rr) {
         for (int cc = 0; cc < cols; ++cc) {
             int idx = rr * cols + cc;
@@ -295,6 +307,10 @@ rt::ecs::Entity FormationSpawnSystem::spawnGrid(rt::ecs::Registry& r, float y, i
             r.emplace<EnemyTag>(e, {});
             r.emplace<Size>(e, {27.f, 18.f});
             r.emplace<FormationFollower>(e, {origin, static_cast<std::uint16_t>(idx), cc * 36.f, rr * 36.f});
+            if (chance(rng_) < (int)shooterPercent_) {
+                float interval = (difficulty_ == 2 ? 1.0f : difficulty_ == 1 ? 1.3f : 1.7f);
+                r.emplace<EnemyShooter>(e, EnemyShooter{0.f, interval, 220.f, 0.60f});
+            }
         }
     }
     return origin;
@@ -307,6 +323,7 @@ rt::ecs::Entity FormationSpawnSystem::spawnTriangle(rt::ecs::Registry& r, float 
     r.emplace<Formation>(origin, {FormationType::Triangle, -55.f, 0.f, 0.f, 36.f, rows, 0});
     int idx = 0;
     // Left-pointing triangle: apex on the left, expanding columns to the right
+    std::uniform_int_distribution<int> chance(0, 99);
     for (int cc = 0; cc < rows; ++cc) {
         int count = cc + 1; // number of enemies in this column
         float startY = -0.5f * (count - 1) * 36.f; // center vertically per column
@@ -321,6 +338,10 @@ rt::ecs::Entity FormationSpawnSystem::spawnTriangle(rt::ecs::Registry& r, float 
             r.emplace<EnemyTag>(e, {});
             r.emplace<Size>(e, {27.f, 18.f});
             r.emplace<FormationFollower>(e, {origin, static_cast<std::uint16_t>(idx++), localX, localY});
+            if (chance(rng_) < (int)shooterPercent_) {
+                float interval = (difficulty_ == 2 ? 1.0f : difficulty_ == 1 ? 1.3f : 1.7f);
+                r.emplace<EnemyShooter>(e, EnemyShooter{0.f, interval, 220.f, 0.60f});
+            }
         }
     }
     return origin;
@@ -350,7 +371,7 @@ rt::ecs::Entity FormationSpawnSystem::spawnBigShooters(rt::ecs::Registry& r, flo
 
 void FormationSpawnSystem::update(rt::ecs::Registry& r, float dt) {
     timer_ += dt;
-    if (timer_ < 3.0f) return;
+    if (timer_ < baseInterval_) return;
     timer_ = 0.f;
     // Limit to at most two active formations (origins)
     int activeFormations = 0;
@@ -374,8 +395,11 @@ void FormationSpawnSystem::update(rt::ecs::Registry& r, float dt) {
             if (minY > maxY) std::swap(minY, maxY);
             std::uniform_real_distribution<float> ydist(minY, maxY);
             y = ydist(rng_);
-            spawnSnake(r, y, 6);
-            std::cout << "[server] Spawn formation: Snake y=" << y << " count=6" << std::endl;
+            {
+                int base = 6; int count = std::max(1, (int)std::round(base * countMultiplier_));
+                spawnSnake(r, y, count);
+                std::cout << "[server] Spawn formation: Snake y=" << y << " count=" << count << std::endl;
+            }
             break;
         }
         case 1: {
@@ -384,13 +408,18 @@ void FormationSpawnSystem::update(rt::ecs::Registry& r, float dt) {
             float maxY = kWorldH - kBottomMargin - kEnemyH;
             std::uniform_real_distribution<float> ydist(minY, maxY);
             y = ydist(rng_);
-            spawnLine(r, y, 8);
-            std::cout << "[server] Spawn formation: Line y=" << y << " count=8" << std::endl;
+            {
+                int base = 8; int count = std::max(1, (int)std::round(base * countMultiplier_));
+                spawnLine(r, y, count);
+                std::cout << "[server] Spawn formation: Line y=" << y << " count=" << count << std::endl;
+            }
             break;
         }
         case 2: {
             // Grid: rows x cols, vertical extent = (rows-1)*spacing + enemyH
             int rows = 3, cols = 5;
+            rows = std::max(1, (int)std::round(rows * countMultiplier_));
+            cols = std::max(1, (int)std::round(cols * countMultiplier_));
             float extent = (rows - 1) * kSpacing + kEnemyH;
             float minY = kTopMargin;
             float maxY = kWorldH - kBottomMargin - extent;
@@ -404,6 +433,7 @@ void FormationSpawnSystem::update(rt::ecs::Registry& r, float dt) {
         case 3: {
             // Triangle: vertical half-extent = 0.5*(rows-1)*spacing
             int rows = 5;
+            rows = std::max(1, (int)std::round(rows * countMultiplier_));
             float half = 0.5f * (rows - 1) * kSpacing;
             float minY = kTopMargin + half;
             float maxY = kWorldH - kBottomMargin - half - kEnemyH;
@@ -420,13 +450,19 @@ void FormationSpawnSystem::update(rt::ecs::Registry& r, float dt) {
             float maxY = kWorldH - kBottomMargin - 20.f; // account for big enemy height
             std::uniform_real_distribution<float> ydist(minY, maxY);
             y = ydist(rng_);
-            spawnBigShooters(r, y, 3);
-            std::cout << "[server] Spawn formation: BigShooters y=" << y << " count=3" << std::endl;
+            {
+                int base = 3; int count = std::max(1, (int)std::round(base * countMultiplier_));
+                spawnBigShooters(r, y, count);
+                std::cout << "[server] Spawn formation: BigShooters y=" << y << " count=" << count << std::endl;
+            }
             break;
         }
         default:
-            spawnLine(r, y, 6);
-            std::cout << "[server] Spawn formation: Line (default) y=" << y << " count=6" << std::endl;
+            {
+                int base = 6; int count = std::max(1, (int)std::round(base * countMultiplier_));
+                spawnLine(r, y, count);
+                std::cout << "[server] Spawn formation: Line (default) y=" << y << " count=" << count << std::endl;
+            }
             break;
     }
 }

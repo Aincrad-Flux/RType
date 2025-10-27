@@ -10,6 +10,9 @@
 #include "common/Protocol.hpp"
 #include "rt/ecs/Registry.hpp"
 
+// Forward declaration to avoid including heavy headers in the interface
+namespace rt { namespace game { class FormationSpawnSystem; } }
+
 namespace rtype::server {
 
 class UdpServer {
@@ -27,6 +30,8 @@ class UdpServer {
   void broadcastRoster();
   void broadcastLivesUpdate(std::uint32_t id, std::uint8_t lives);
   void broadcastScoreUpdate(std::uint32_t id, std::int32_t score);
+    void broadcastLobbyStatus();
+    void broadcastGameOver(std::uint8_t reason = 0);
     void checkTimeouts();
     void removeClient(const std::string& key);
 
@@ -55,6 +60,15 @@ class UdpServer {
     std::mt19937 rng_;
     std::unordered_map<std::string,
     std::chrono::steady_clock::time_point> lastSeen_;
+
+  // Lobby / match state
+  std::uint32_t hostId_ = 0;
+  std::uint8_t lobbyBaseLives_ = 4;    // 1..6
+  std::uint8_t lobbyDifficulty_ = 1;   // 0=Easy,1=Normal,2=Hard
+  std::uint8_t shooterPercent_ = 25;   // percent of enemies that can shoot
+  bool matchStarted_ = false;
+  // Cached pointer to formation spawner for difficulty tuning
+  rt::game::FormationSpawnSystem* spawnSys_ = nullptr;
 };
 
 }

@@ -73,6 +73,16 @@ void Screens::handleNetPacket(const char* data, std::size_t n) {
         _score = su->score;
     } else if (h->type == rtype::net::MsgType::ReturnToMenu) {
         _serverReturnToMenu = true;
+    } else if (h->type == rtype::net::MsgType::LobbyStatus) {
+        const char* p = data + sizeof(rtype::net::Header);
+        if (n < sizeof(rtype::net::Header) + sizeof(rtype::net::LobbyStatusPayload)) return;
+        auto* ls = reinterpret_cast<const rtype::net::LobbyStatusPayload*>(p);
+        _hostId = ls->hostId;
+        _lobbyBaseLives = std::clamp<int>(ls->baseLives, 1, 6);
+        _lobbyDifficulty = std::clamp<int>(ls->difficulty, 0, 2);
+        _lobbyStarted = (ls->started != 0);
+    } else if (h->type == rtype::net::MsgType::GameOver) {
+        _gameOver = true;
     }
 }
 

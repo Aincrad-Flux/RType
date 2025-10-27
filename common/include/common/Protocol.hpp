@@ -18,7 +18,12 @@ enum class MsgType : std::uint8_t {
     ScoreUpdate, // notify when a player's score changes (authoritative)
     // New messages
     Disconnect,     // client -> server: explicit disconnect notice
-    ReturnToMenu    // server -> client: ask client to return to menu (e.g., too few players)
+    ReturnToMenu,   // server -> client: ask client to return to menu (e.g., too few players)
+    // Lobby/match flow
+    LobbyStatus,    // server -> client: host id and current lobby settings
+    LobbyConfig,    // client (host) -> server: change settings (difficulty, baseLives)
+    StartMatch,     // client (host) -> server: start the game
+    GameOver        // server -> client: match ended (all players dead)
 };
 
 struct Header {
@@ -99,6 +104,33 @@ struct LivesUpdatePayload {
 struct ScoreUpdatePayload {
     std::uint32_t id;
     std::int32_t score; // new total score
+};
+#pragma pack(pop)
+
+// --- Lobby and match messages ---
+// Server broadcasts the current lobby state to all clients
+#pragma pack(push, 1)
+struct LobbyStatusPayload {
+    std::uint32_t hostId;     // player id designated as host (0 if none)
+    std::uint8_t baseLives;   // 1..6
+    std::uint8_t difficulty;  // 0=Easy,1=Normal,2=Hard
+    std::uint8_t started;     // 0 or 1
+    std::uint8_t reserved{0}; // for future use / alignment
+};
+#pragma pack(pop)
+
+// Host requests lobby configuration change
+#pragma pack(push, 1)
+struct LobbyConfigPayload {
+    std::uint8_t baseLives;  // desired 1..6
+    std::uint8_t difficulty; // 0..2
+};
+#pragma pack(pop)
+
+// Server notifies that match is over (e.g., all players dead)
+#pragma pack(push, 1)
+struct GameOverPayload {
+    std::uint8_t reason; // 0=allDead, 1=hostLeft, etc. (reserved)
 };
 #pragma pack(pop)
 

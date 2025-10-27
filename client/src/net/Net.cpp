@@ -79,6 +79,30 @@ void Screens::sendInput(std::uint8_t bits) {
     g.sock->send_to(asio::buffer(buf), g.server);
 }
 
+void Screens::sendLobbyConfig(std::uint8_t difficulty, std::uint8_t baseLives) {
+    if (!g.sock) return;
+    rtype::net::Header hdr{};
+    hdr.version = rtype::net::ProtocolVersion;
+    hdr.type = rtype::net::MsgType::LobbyConfig;
+    rtype::net::LobbyConfigPayload p{ baseLives, difficulty };
+    hdr.size = sizeof(p);
+    std::array<char, sizeof(hdr) + sizeof(p)> buf{};
+    std::memcpy(buf.data(), &hdr, sizeof(hdr));
+    std::memcpy(buf.data() + sizeof(hdr), &p, sizeof(p));
+    g.sock->send_to(asio::buffer(buf), g.server);
+}
+
+void Screens::sendStartMatch() {
+    if (!g.sock) return;
+    rtype::net::Header hdr{};
+    hdr.version = rtype::net::ProtocolVersion;
+    hdr.type = rtype::net::MsgType::StartMatch;
+    hdr.size = 0;
+    std::array<char, sizeof(rtype::net::Header)> buf{};
+    std::memcpy(buf.data(), &hdr, sizeof(hdr));
+    g.sock->send_to(asio::buffer(buf), g.server);
+}
+
 void Screens::pumpNetworkOnce() {
     if (!g.sock) return;
     for (int i = 0; i < 8; ++i) {
