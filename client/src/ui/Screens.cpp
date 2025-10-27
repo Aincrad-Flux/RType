@@ -234,6 +234,59 @@ void Screens::drawMultiplayer(ScreenState& screen, MultiplayerForm& form) {
     }
 }
 
+bool Screens::autoConnect(ScreenState& screen, MultiplayerForm& form) {
+    // Mimic the Connect button path but callable programmatically
+    bool canConnect = !form.username.empty() && !form.serverAddress.empty() && !form.serverPort.empty();
+    if (!canConnect) {
+        _statusMessage = std::string("Missing host/port/name for autoconnect.");
+        return false;
+    }
+    try {
+        _username = form.username;
+        _serverAddr = form.serverAddress;
+        _serverPort = form.serverPort;
+        _selfId = 0;
+        _playerLives = 4;
+        _gameOver = false;
+        _otherPlayers.clear();
+        teardownNet();
+        ensureNetSetup();
+        double start = GetTime();
+        bool ok = false;
+        while (GetTime() - start < 1.0) {
+            asio::ip::udp::endpoint from;
+            std::array<char, 1024> in{};
+            asio::error_code ec;
+            std::size_t n = g.sock->receive_from(asio::buffer(in), from, 0, ec);
+            if (!ec && n >= sizeof(rtype::net::Header)) {
+                auto* rh = reinterpret_cast<rtype::net::Header*>(in.data());
+                if (rh->version == rtype::net::ProtocolVersion) {
+                    if (rh->type == rtype::net::MsgType::HelloAck) { ok = true; break; }
+                    handleNetPacket(in.data(), n);
+                }
+            } else if (ec && ec != asio::error::would_block) {
+                logMessage(std::string("Receive error: ") + ec.message(), "ERROR");
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        if (ok) {
+            _statusMessage = std::string("Player Connected.");
+            _connected = true;
+            screen = ScreenState::Waiting;
+            return true;
+        } else {
+            _statusMessage = std::string("Connection failed.");
+            teardownNet();
+            return false;
+        }
+    } catch (const std::exception& e) {
+        logMessage(std::string("Exception: ") + e.what(), "ERROR");
+        _statusMessage = std::string("Error: ") + e.what();
+        teardownNet();
+        return false;
+    }
+}
+
 void Screens::drawOptions() {
     int h = GetScreenHeight();
     int baseFont = baseFontFromHeight(h);

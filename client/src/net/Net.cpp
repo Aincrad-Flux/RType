@@ -113,4 +113,39 @@ bool Screens::waitHelloAck(double timeoutSec) {
     return false;
 }
 
+bool Screens::autoConnect(ScreenState& screen, MultiplayerForm& form) {
+    bool canConnect = !form.username.empty() && !form.serverAddress.empty() && !form.serverPort.empty();
+    if (!canConnect) {
+        _statusMessage = std::string("Missing host/port/name for autoconnect.");
+        return false;
+    }
+    try {
+        _username = form.username;
+        _serverAddr = form.serverAddress;
+        _serverPort = form.serverPort;
+        _selfId = 0;
+        _playerLives = 4;
+        _gameOver = false;
+        _otherPlayers.clear();
+        teardownNet();
+        ensureNetSetup();
+        bool ok = waitHelloAck(1.0);
+        if (ok) {
+            _statusMessage = std::string("Player Connected.");
+            _connected = true;
+            screen = ScreenState::Waiting;
+            return true;
+        } else {
+            _statusMessage = std::string("Connection failed.");
+            teardownNet();
+            return false;
+        }
+    } catch (const std::exception& e) {
+        logMessage(std::string("Exception: ") + e.what(), "ERROR");
+        _statusMessage = std::string("Error: ") + e.what();
+        teardownNet();
+        return false;
+    }
+}
+
 } } // namespace client::ui
