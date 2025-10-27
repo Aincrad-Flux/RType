@@ -73,7 +73,8 @@ void Screens::drawGameplay(ScreenState& screen) {
     // --- Bottom HUD: Lives (left) + Overheat bar (center) ---
     int bottomY = h - bottomBarH;
     DrawRectangle(0, bottomY, w, bottomBarH, (Color){0, 0, 0, 140});
-    int sqSize = std::max(8, bottomBarH - 2 * margin);
+    // Make HP squares smaller so they don't collide with the charge bar
+    int sqSize = std::max(6, (int)((bottomBarH - 2 * margin) * 0.6f));
     int gap = std::max(6, sqSize / 3);
     int livesToDraw = std::min(10, std::max(0, _playerLives));
     int startX = margin;

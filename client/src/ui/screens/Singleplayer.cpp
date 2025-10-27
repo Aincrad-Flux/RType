@@ -312,7 +312,8 @@ void Screens::drawSingleplayerWorld() {
     int barH = (int)(h * 0.06f);
     int margin = 8;
     DrawRectangle(0, h - barH, w, barH, (Color){0, 0, 0, 140});
-    int sqSize = barH - 2 * margin;
+    // Make HP squares smaller so they don't sit under the charge bar
+    int sqSize = std::max(6, (int)((barH - 2 * margin) * 0.6f));
     if (sqSize < 8) sqSize = 8;
     int gap = 6;
     int total = _maxLives;
