@@ -79,6 +79,10 @@ private:
     void shutdownSingleplayerWorld();
     void updateSingleplayerWorld(float dt);
     void drawSingleplayerWorld();
+    // Power-ups helpers (bonus logic isolated)
+    void spHandleScoreThresholdSpawns(int screenW);
+    void spUpdatePowerups(float dt);
+    void spDrawPowerups();
     // Formation wave spawners (singleplayer sandbox)
     void spSpawnLine(int count, float y);
     void spSpawnSnake(int count, float y, float amplitude, float frequency, float spacing);
