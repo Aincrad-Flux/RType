@@ -450,23 +450,16 @@ void CollisionSystem::update(rt::ecs::Registry& r, float dt) {
             // hit enemies
             for (auto& [e, _] : r.storage<EnemyTag>().data()) {
                 if (!intersects(b, e)) continue;
-                // If this enemy is a boss, decrement HP instead of immediate death
                 if (auto* boss = r.get<BossTag>(e)) {
-                    // apply damage
                     if (boss->hp > 0) boss->hp -= 1;
-                    // Destroy bullet unless it's a beam
                     if (!isBeam) toDestroy.push_back(b);
-                    // If dead now, destroy boss and award big score
                     if (boss->hp <= 0) {
-                        // award score to bullet owner if any
                         if (auto* bo = r.get<BulletOwner>(b)) if (auto* sc = r.get<Score>(bo->owner)) sc->value += 1000;
                         toDestroy.push_back(e);
                     }
-                    // For bosses, do not process further targets for this bullet if it's not a beam
                     if (!isBeam) break;
                     else continue;
                 }
-                // Normal enemy: award score and destroy
                 if (auto* bo = r.get<BulletOwner>(b)) {
                     if (auto* sc = r.get<Score>(bo->owner)) {
                         sc->value += 50;
@@ -474,7 +467,7 @@ void CollisionSystem::update(rt::ecs::Registry& r, float dt) {
                 }
                 if (!isBeam) toDestroy.push_back(b);
                 toDestroy.push_back(e);
-                if (!isBeam) break; // stop after first hit for regular bullets
+                if (!isBeam) break;
             }
         } else {
             // enemy bullets hit players
@@ -517,41 +510,33 @@ void InvincibilitySystem::update(rt::ecs::Registry& r, float dt) {
     }
 }
 
-// Spawn the boss when any player's score reaches threshold. Only one boss per run.
 void BossSpawnSystem::update(rt::ecs::Registry& r, float dt) {
     (void)dt;
-    // If a boss already exists, nothing to do
     for (auto& [e, _] : r.storage<BossTag>().data()) { (void)e; spawned_ = true; return; }
     if (spawned_) return;
-    // Check any player's score
     int bestScore = 0;
     for (auto& [e, sc] : r.storage<Score>().data()) { (void)e; bestScore = std::max(bestScore, sc.value); }
     if (bestScore < threshold_) return;
-    // Spawn boss entity
-    // World/margins consistent with formation logic
     constexpr float kWorldH = 600.f;
     constexpr float kTopMargin = 56.f;
     constexpr float kBottomMargin = 10.f;
-    // Boss size (bigger than enemies)
     float bw = 160.f;
     float bh = 120.f;
     float yMin = kTopMargin;
     float yMax = kWorldH - kBottomMargin - bh;
     if (yMax < yMin) yMax = yMin;
     float by = 0.5f * (yMin + yMax);
-    // Spawn slightly offscreen to the right
     auto e = r.create();
     r.emplace<Transform>(e, Transform{980.f + 60.f, by});
     r.emplace<Velocity>(e, Velocity{-60.f, 0.f});
     r.emplace<Size>(e, Size{bw, bh});
-    r.emplace<ColorRGBA>(e, ColorRGBA{0x9646B4FFu}); // purple
-    r.emplace<NetType>(e, NetType{static_cast<rtype::net::EntityType>(2)}); // treat as Enemy for net
+    r.emplace<ColorRGBA>(e, ColorRGBA{0x9646B4FFu});
+    r.emplace<NetType>(e, NetType{static_cast<rtype::net::EntityType>(2)});
     r.emplace<EnemyTag>(e, EnemyTag{});
     BossTag boss{};
     boss.maxHp = 50;
     boss.hp = boss.maxHp;
     boss.rightMargin = 20.f;
-    // Assume server world width ~ 960; stop so boss fully visible
     float worldW = 960.f;
     boss.stopX = worldW - boss.rightMargin - bw;
     boss.atStop = false;
@@ -562,7 +547,6 @@ void BossSpawnSystem::update(rt::ecs::Registry& r, float dt) {
     spawned_ = true;
 }
 
-// Control boss movement: slide to stopX, then bounce vertically within world bounds
 void BossSystem::update(rt::ecs::Registry& r, float dt) {
     constexpr float kWorldH = 600.f;
     constexpr float kTopMargin = 56.f;
@@ -576,7 +560,6 @@ void BossSystem::update(rt::ecs::Registry& r, float dt) {
         float minY = kTopMargin;
         float maxY = kWorldH - kBottomMargin - s->h;
         if (!boss.atStop) {
-            // Move left towards stopX
             if (t->x > boss.stopX) {
                 v->vx = boss.speedX;
             } else {
@@ -584,12 +567,10 @@ void BossSystem::update(rt::ecs::Registry& r, float dt) {
                 v->vx = 0.f;
                 boss.atStop = true;
             }
-            // While approaching, keep inside vertical bounds
             if (t->y < minY) t->y = minY;
             if (t->y > maxY) t->y = maxY;
             v->vy = 0.f;
         } else {
-            // Vertical patrol
             v->vx = 0.f;
             if (boss.dirDown) {
                 v->vy = std::abs(boss.speedY);
@@ -598,7 +579,6 @@ void BossSystem::update(rt::ecs::Registry& r, float dt) {
                 v->vy = -std::abs(boss.speedY);
                 if (t->y <= minY) boss.dirDown = true;
             }
-            // Clamp to ensure we don't overshoot bounds
             if (t->y < minY) t->y = minY;
             if (t->y > maxY) t->y = maxY;
         }

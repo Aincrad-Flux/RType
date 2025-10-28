@@ -152,7 +152,6 @@ void Screens::initSingleplayerWorld() {
 }
 
 void Screens::shutdownSingleplayerWorld() {
-    // Destroy boss entity if present
     if (_spWorld && _spBossId != 0) {
         _spWorld->destroy(_spBossId);
     }
@@ -200,7 +199,6 @@ void Screens::updateSingleplayerWorld(float dt) {
     // Tick infinite fire
     if (_spInfiniteFireTimer > 0.f) { _spInfiniteFireTimer -= dt; if (_spInfiniteFireTimer < 0.f) _spInfiniteFireTimer = 0.f; }
 
-    // Spawn boss when reaching 15000 points (once per run)
     if (!_spBossSpawned && _score >= 15000) {
         spSpawnBoss();
         _spBossSpawned = true;
@@ -289,7 +287,6 @@ void Screens::updateSingleplayerWorld(float dt) {
         else { ++it; }
     }
 
-    // Update boss AI: slide in from right until stop position, then patrol vertically between top/bottom bounds
     if (_spBossActive && _spBossId != 0) {
         auto* pos = _spWorld->get<rt::components::Position>(_spBossId);
         auto* ai = _spWorld->get<rt::components::AiController>(_spBossId);
@@ -304,20 +301,17 @@ void Screens::updateSingleplayerWorld(float dt) {
                 float minY = 0.f;
                 float maxY = screenH - _spBossH;
                 if (minY > maxY) maxY = minY;
-                // compute or update stop X
                 _spBossStopX = (float)screenW - _spBossRightMargin - _spBossW;
                 if (!_spBossAtStop) {
                     if (pos->x > _spBossStopX) {
                         b |= kLeft;
                     } else {
                         _spBossAtStop = true;
-                        // clamp Y inside bounds on first stop
                         if (pos->y < minY) pos->y = minY;
                         if (pos->y > maxY) pos->y = maxY;
                     }
                 }
                 if (_spBossAtStop) {
-                    // bounce between minY and maxY
                     if (_spBossDirDown) {
                         b |= kDown;
                         if (pos->y >= maxY) _spBossDirDown = false;
@@ -361,7 +355,6 @@ void Screens::updateSingleplayerWorld(float dt) {
                 }
             }
         }
-        // Collide with boss if active
         if (!destroyBullet && _spBossActive && _spBossId != 0) {
             if (auto* bp = _spWorld->get<rt::components::Position>(_spBossId)) {
                 float ex = bp->x, ey = bp->y, ew = _spBossW, eh = _spBossH;
@@ -369,18 +362,14 @@ void Screens::updateSingleplayerWorld(float dt) {
                 float ex2 = ex + ew, ey2 = ey + eh;
                 bool hit = !(bx2 < ex || ex2 < bx1 || by2 < ey || ey2 < by1);
                 if (hit) {
-                    // 1 hit = -1 HP; requires 50 hits total
                     if (_spBossHp > 0) _spBossHp -= 1;
-                    // Optional: prevent HP from underflowing
                     if (_spBossHp < 0) _spBossHp = 0;
                     destroyBullet = true;
-                    // If boss died, destroy entity and end boss phase
                     if (_spBossHp == 0) {
                         _spWorld->destroy(_spBossId);
                         _spBossId = 0;
                         _spBossActive = false;
                         _spBossAtStop = false;
-                        // small score reward for kill (optional)
                         _score += 1000;
                     }
                 }
@@ -439,7 +428,6 @@ void Screens::drawSingleplayerWorld() {
     if (_spBossActive && _spBossId != 0) {
         if (auto* bp = _spWorld->get<rt::components::Position>(_spBossId)) {
             Rectangle rect{bp->x, bp->y, _spBossW, _spBossH};
-            // Big purple boss
             DrawRectangleRec(rect, (Color){150, 60, 180, 255});
             DrawRectangleLines((int)rect.x, (int)rect.y, (int)rect.width, (int)rect.height, (Color){220, 200, 240, 255});
         }
@@ -487,7 +475,6 @@ void Screens::drawSingleplayerWorld() {
     std::string scoreText = std::string("Score: ") + std::to_string(_score);
     DrawText(scoreText.c_str(), margin, margin, font, RAYWHITE);
 
-    // Boss HP bar at top-center if active
     if (_spBossActive && _spBossHpMax > 0) {
         float ratio = (float)_spBossHp / (float)_spBossHpMax;
         if (ratio < 0.f) ratio = 0.f; if (ratio > 1.f) ratio = 1.f;
@@ -495,24 +482,19 @@ void Screens::drawSingleplayerWorld() {
         int barH2 = (int)(h * 0.03f);
         int barX = (w - barW) / 2;
         int barY = margin + font + 6; // below score line
-        // label above the bar
         const char* label = "BOSS";
         int tw = MeasureText(label, font);
         int labelX = barX + (barW - tw) / 2;
         int labelY = barY - font - 4;
         if (labelY < 0) labelY = 0;
         DrawText(label, labelX, labelY, font, RAYWHITE);
-        // backdrop
         DrawRectangle(barX, barY, barW, barH2, (Color){30, 30, 30, 200});
-        // fill (red -> darker as low)
         Color hpC = (Color){220, 70, 70, 230};
         DrawRectangle(barX, barY, (int)(barW * ratio), barH2, hpC);
-        // outline
         DrawRectangleLines(barX, barY, barW, barH2, (Color){220, 220, 220, 220});
     }
 }
 
-// --- Power-ups helpers ---
 void Screens::spHandleScoreThresholdSpawns(int screenW) {
     while (_score >= _spNextPowerupScore) {
         int h = GetScreenHeight();
@@ -593,7 +575,6 @@ void Screens::spUpdatePowerups(float dt) {
             }
             remove = true;
         }
-        // Offscreen
         if (pu.x + pu.radius < -20.f) remove = true;
         if (remove) _spPowerups.erase(_spPowerups.begin() + (long)i);
         else ++i;
@@ -605,19 +586,15 @@ void Screens::spDrawPowerups() {
         Color fill;
         Color line;
         if (pu.type == SpPowerupType::Invincibility) {
-            // blue circle for invincibility
             fill = (Color){80, 170, 255, 220};
             line = (Color){120, 200, 255, 255};
         } else if (pu.type == SpPowerupType::ClearBoard) {
-            // purple circle for clear board
             fill = (Color){170, 80, 200, 230};
             line = (Color){210, 120, 240, 255};
         } else if (pu.type == SpPowerupType::InfiniteFire) {
-            // yellow sphere for infinite fire
             fill = (Color){240, 220, 80, 230};
             line = (Color){255, 240, 120, 255};
         } else {
-            // green circle for extra life
             fill = (Color){100, 220, 120, 255};
             line = (Color){60, 160, 80, 255};
         }
@@ -626,7 +603,6 @@ void Screens::spDrawPowerups() {
     }
 }
 
-// --- Formation spawners ---
 void Screens::spScheduleNextSpawn() {
     std::uniform_real_distribution<float> dd(_spMinSpawnDelay, _spMaxSpawnDelay);
     _spNextSpawnDelay = dd(_spRng);
@@ -697,7 +673,7 @@ void Screens::spSpawnDiamond(int rows, float y, float spacing) {
     }
     for (int col = rows - 2; col >= 0; --col) {
         int count = col + 1;
-        float localX = (2 * rows - 2 - col) * spacing; // mirror back
+        float localX = (2 * rows - 2 - col) * spacing;
         float startY = -0.5f * (count - 1) * spacing;
         for (int r = 0; r < count; ++r) {
             float localY = startY + r * spacing;
@@ -711,12 +687,11 @@ void Screens::spSpawnDiamond(int rows, float y, float spacing) {
     }
 }
 
-// Boss spawner: create a large enemy that slides in from the right and stops near right edge
 void Screens::spSpawnBoss() {
     if (!_spWorld) return;
     int screenW = GetScreenWidth();
     int screenH = GetScreenHeight();
-    float spawnX = (float)screenW + 40.f; // off-screen to the right
+    float spawnX = (float)screenW + 40.f;
     float minY = 0.f;
     float maxY = screenH - _spBossH;
     if (maxY < minY) maxY = minY;
