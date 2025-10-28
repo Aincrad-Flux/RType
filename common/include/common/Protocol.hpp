@@ -18,7 +18,10 @@ enum class MsgType : std::uint8_t {
     ScoreUpdate, // notify when a player's score changes (authoritative)
     // New messages
     Disconnect,     // client -> server: explicit disconnect notice
-    ReturnToMenu    // server -> client: ask client to return to menu (e.g., too few players)
+    ReturnToMenu,   // server -> client: ask client to return to menu (e.g., too few players)
+
+    TcpWelcome = 100,
+    StartGame  = 101
 };
 
 struct Header {
@@ -53,6 +56,17 @@ enum class EntityType : std::uint8_t {
 struct InputPacket {
     std::uint32_t sequence; // client-side increasing sequence id
     std::uint8_t bits;      // combination of Input* bits
+};
+
+// --- NEW: unified per-frame client package ---
+// Groups input + optional gameplay state in one packet
+struct ClientPackage {
+    std::uint32_t sequence;   // frame counter or timestamp
+    std::uint8_t inputBits;   // bitmask of current pressed keys
+    std::uint8_t actionFlags; // reserved for special actions (shoot, charge, etc.)
+    float chargeLevel;        // current charge amount (0.0f if unused)
+    std::uint32_t pingTime;   // optional timestamp for ping/pong tracking
+    char username[16];        // zero-padded/truncated username (max 15 chars + NUL)
 };
 
 struct PackedEntity {

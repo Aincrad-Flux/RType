@@ -23,7 +23,6 @@
 #include "rt/systems/AiControlSystem.hpp"
 #include "rt/systems/CollisionSystem.hpp"
 
-
 namespace client {
 namespace ui {
 
@@ -89,19 +88,18 @@ private:
     bool _spPaused = false;
     std::unique_ptr<rt::ecs::Registry> _spWorld;
     rt::ecs::Entity _spPlayer = 0;
-    // Singleplayer enemies and waves
     enum class SpFormationKind { Line, Snake, Triangle, Diamond };
     struct SpEnemy {
         rt::ecs::Entity id{0};
         SpFormationKind kind{SpFormationKind::Line};
-        int index{0};            // index within formation
-        float baseY{0.f};        // initial baseline Y
-        float spacing{36.f};     // horizontal/vertical spacing
-        float amplitude{60.f};   // for Snake vertical amplitude
-        float frequency{2.0f};   // for Snake frequency
-        float spawnTime{0.f};    // time when spawned (for animation phase)
-        float localX{0.f};       // initial local X within formation
-        float localY{0.f};       // initial local Y within formation
+        int index{0};
+        float baseY{0.f};
+        float spacing{36.f};
+        float amplitude{60.f};
+        float frequency{2.0f};
+        float spawnTime{0.f};
+        float localX{0.f};
+        float localY{0.f};
     };
     std::vector<SpEnemy> _spEnemies;
     struct SpBullet { float x; float y; float vx; float vy; float w; float h; };
@@ -109,94 +107,87 @@ private:
     float _spElapsed = 0.f;
     float _spSpawnTimer = 0.f;
     int _spNextFormation = 0;
-    // Random spawn control
     std::mt19937 _spRng{};
-    float _spNextSpawnDelay = 2.0f; // seconds until next spawn
+    float _spNextSpawnDelay = 2.0f;
     float _spMinSpawnDelay = 1.8f;
     float _spMaxSpawnDelay = 3.6f;
-    std::size_t _spEnemyCap = 40; // maximum active enemies in sandbox
-    // Shooting config
+    std::size_t _spEnemyCap = 40;
     float _spShootCooldown = 0.f;
     float _spShootInterval = 0.18f;
     float _spBulletSpeed = 420.f;
     float _spBulletW = 8.f;
     float _spBulletH = 3.f;
-    // Player hit cooldown (i-frames)
-    float _spHitIframes = 1.f;      // seconds left of invincibility
+    float _spHitIframes = 1.f;
     float _spHitIframesDuration = 1.0f;
-    // Overheat mechanic (center bar): drains while holding fire, locks shooting at 0, recovers when not firing
-    float _spHeat = 1.0f;           // 0..1
+    float _spHeat = 1.0f;
     float _spHeatDrainPerSec = 0.30f;
     float _spHeatRegenPerSec = 0.15f;
-    // We keep systems owned by the world; stored here for clarity
     bool _spInitialized = false;
 
-    // Check if required sprite assets are available on disk
+    // --- Networking ---
     bool assetsAvailable() const;
-    // Parse a single UDP datagram payload according to our protocol and update local state
     void handleNetPacket(const char* data, std::size_t n);
     int _focusedField = 0;
     std::string _statusMessage;
-    // network state for gameplay
     bool _connected = false;
     std::string _username;
     std::string _serverAddr;
     std::string _serverPort;
-    // lightweight UDP client
     void ensureNetSetup();
     void teardownNet();
     void sendDisconnect();
     void sendInput(std::uint8_t bits);
     void pumpNetworkOnce();
-    // Block for a short time waiting for HelloAck on current UDP socket; also feeds other packets
     bool waitHelloAck(double timeoutSec);
     struct PackedEntity { unsigned id; unsigned char type; float x; float y; float vx; float vy; unsigned rgba; };
     std::vector<PackedEntity> _entities;
     double _lastSend = 0.0;
     bool _serverReturnToMenu = false;
-    // --- spritesheet handling ---
+
+    // --- Packet sequence counter for ClientPackage ---
+    std::uint32_t _sequenceCounter = 0; // increments each time sendInput() is called
+
+    // --- Sprites ---
     void loadSprites();
     void loadEnemySprites();
     std::string findSpritePath(const char* name) const;
     Texture2D _sheet{};
     bool _sheetLoaded = false;
-    int _sheetCols = 5; // spritesheet is 5x5 per user spec
+    int _sheetCols = 5;
     int _sheetRows = 5;
     float _frameW = 0.f;
     float _frameH = 0.f;
-    // Enemy spritesheet (r-typesheet19.gif, 230x97)
     Texture2D _enemySheet{};
     bool _enemyLoaded = false;
-    int _enemyCols = 7; // per user spec: 7 columns
-    int _enemyRows = 3; // per user spec: 3 rows
+    int _enemyCols = 7;
+    int _enemyRows = 3;
     float _enemyFrameW = 0.f;
     float _enemyFrameH = 0.f;
-    // Fixed sprite assignment per player id
-    std::unordered_map<unsigned, int> _spriteRowById; // id -> row index
-    int _nextSpriteRow = 0; // next row to assign on first sight
+    std::unordered_map<unsigned, int> _spriteRowById;
+    int _nextSpriteRow = 0;
 
-    // --- Gameplay HUD state (placeholders until server data is wired) ---
-    int _playerLives = 4; // 0..10
+    // --- HUD ---
+    int _playerLives = 4;
     int _maxLives = 6;
-    unsigned _selfId = 0;  // our player id (from roster)
+    unsigned _selfId = 0;
     int _score = 0;
     int _level = 1;
-        struct OtherPlayer { std::uint32_t id; std::string name; int lives; };
-        std::vector<OtherPlayer> _otherPlayers; // show up to 3 then "+ x"
-        std::uint32_t _localPlayerId = 0; // received from Roster
-        bool _haveLocalId = false;
-    bool _gameOver = false; // set when our lives reach 0
+    struct OtherPlayer { std::uint32_t id; std::string name; int lives; };
+    std::vector<OtherPlayer> _otherPlayers;
+    std::uint32_t _localPlayerId = 0;
+    bool _haveLocalId = false;
+    bool _gameOver = false;
 
-    // --- Client-side charge beam (Alt + Space) ---
+    // --- Client-side charge beam ---
     bool _isCharging = false;
     double _chargeStart = 0.0;
     bool _beamActive = false;
     double _beamEndTime = 0.0;
-    float _beamX = 0.0f;        // origin X at release
-    float _beamY = 0.0f;        // center Y at release
-    float _beamThickness = 0.0f; // computed from charge duration
+    float _beamX = 0.0f;
+    float _beamY = 0.0f;
+    float _beamThickness = 0.0f;
 
-    // --- Shot mode toggle (Normal vs Charge), switched with Ctrl key ---
+    // --- Shot mode toggle ---
     enum class ShotMode { Normal = 0, Charge = 1 };
     ShotMode _shotMode = ShotMode::Normal;
 
