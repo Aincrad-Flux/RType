@@ -100,8 +100,14 @@ void UdpServer::handlePacket(const asio::ip::udp::endpoint& from, const char* da
             if (uname.empty()) uname = "Player" + std::to_string(e);
             playerNames_[e] = uname;
 
+            // Assign host if none
+            if (hostId_ == 0) hostId_ = e;
+
             // Send roster immediately on new join
             broadcastRoster();
+
+            // Also broadcast lobby status to reflect possible new host
+            broadcastLobbyStatus();
 
             // NEW: maybe trigger StartGame if enough players (TCP)
             maybeStartGame();
@@ -148,7 +154,7 @@ void UdpServer::handlePacket(const asio::ip::udp::endpoint& from, const char* da
                 }
                 if (spawnSys_) { spawnSys_->setDifficulty(lobbyDifficulty_); spawnSys_->setShooterPercent(shooterPercent_); }
                 // If match not started, update lives for connected players to reflect base
-                if (!matchStarted_) {
+                if (!gameStarted_) {
                     for (auto& [_, pid] : endpointToPlayerId_) {
                         playerLives_[pid] = lobbyBaseLives_;
                     }
@@ -162,7 +168,7 @@ void UdpServer::handlePacket(const asio::ip::udp::endpoint& from, const char* da
 
     if (header->type == rtype::net::MsgType::StartMatch) {
         auto it = endpointToPlayerId_.find(key);
-        if (it != endpointToPlayerId_.end() && it->second == hostId_) {
+    if (it != endpointToPlayerId_.end() && it->second == hostId_) {
             // Require at least 2 connected players to start
             if (endpointToPlayerId_.size() >= 2) {
                 // Reset world (remove enemies/bullets/formations)
@@ -181,7 +187,7 @@ void UdpServer::handlePacket(const asio::ip::udp::endpoint& from, const char* da
                     if (auto* v = reg_.get<rt::game::Velocity>(pid)) { v->vx = 0.f; v->vy = 0.f; }
                 }
                 lastTeamScore_ = 0;
-                matchStarted_ = true;
+                gameStarted_ = true;
                 broadcastRoster();
                 broadcastLobbyStatus();
                 std::cout << "[server] Match started by host id=" << hostId_ << std::endl;
@@ -268,7 +274,8 @@ void UdpServer::gameLoop() {
                 teamScore += sc->value;
             }
         }
-        if (active && teamScore != lastTeamScore_) {
+        // Broadcast team score total to all clients when it changes
+        if (teamScore != lastTeamScore_) {
             lastTeamScore_ = teamScore;
             rtype::net::Header hdr{};
             hdr.version = rtype::net::ProtocolVersion;
@@ -316,6 +323,12 @@ void UdpServer::removeClient(const std::string& key) {
     lastSeen_.erase(key);
     playerInputBits_.erase(id);
     try { reg_.destroy(id); } catch (...) {}
+
+    // Reassign host if needed
+    if (hostId_ == id) {
+        hostId_ = 0;
+        for (auto& [k2, pid] : endpointToPlayerId_) { (void)k2; hostId_ = pid; break; }
+    }
 
     rtype::net::Header hdr{};
     hdr.size = sizeof(std::uint32_t);
@@ -468,7 +481,7 @@ void UdpServer::broadcastLobbyStatus() {
     p.hostId = hostId_;
     p.baseLives = std::clamp<std::uint8_t>(lobbyBaseLives_, 1, (std::uint8_t)6);
     p.difficulty = std::clamp<std::uint8_t>(lobbyDifficulty_, (std::uint8_t)0, (std::uint8_t)2);
-    p.started = matchStarted_ ? 1 : 0;
+    p.started = gameStarted_ ? 1 : 0;
     std::array<char, sizeof(hdr) + sizeof(p)> out{};
     std::memcpy(out.data(), &hdr, sizeof(hdr));
     std::memcpy(out.data() + sizeof(hdr), &p, sizeof(p));

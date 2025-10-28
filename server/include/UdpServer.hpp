@@ -39,6 +39,8 @@ private:
     void broadcastState();
     void broadcastRoster();
     void broadcastLivesUpdate(std::uint32_t id, std::uint8_t lives);
+    void broadcastLobbyStatus();
+    void broadcastGameOver(std::uint8_t reason);
 
     void maybeStartGame(); // triggers StartGame over TCP
 
@@ -66,7 +68,16 @@ private:
     std::unordered_map<std::string, std::chrono::steady_clock::time_point> lastSeen_;
 
     TcpServer* tcp_ = nullptr;
-    bool gameStarted_ = false;
+    bool gameStarted_ = false; // also used as lobby "started" flag
+
+    // Lobby/match configuration
+    std::uint32_t hostId_ = 0;            // player id designated as host
+    std::uint8_t lobbyBaseLives_ = 4;     // default base lives for players
+    std::uint8_t lobbyDifficulty_ = 1;    // 0=Easy,1=Normal,2=Hard
+    std::uint8_t shooterPercent_ = 25;    // enemy shooters percentage per wave
+
+    // Runtime systems
+    rt::game::FormationSpawnSystem* spawnSys_ = nullptr; // not owned; owned by reg_
 };
 
 } // namespace rtype::server
