@@ -135,8 +135,9 @@ void Screens::initSingleplayerWorld() {
     _spNextFormation = 0;
     // Seed RNG with time
     std::random_device rd; _spRng.seed(rd());
-    // Reset shield state
+    // Reset power-up states
     _spInvincibleTimer = 0.f;
+    _spInfiniteFireTimer = 0.f;
     // Schedule first spawn with random delay
     spScheduleNextSpawn();
     _spInitialized = true;
@@ -152,6 +153,7 @@ void Screens::shutdownSingleplayerWorld() {
     _spPaused = false;
     _gameOver = false;
     _spInvincibleTimer = 0.f;
+    _spInfiniteFireTimer = 0.f;
 }
 
 void Screens::updateSingleplayerWorld(float dt) {
@@ -179,18 +181,25 @@ void Screens::updateSingleplayerWorld(float dt) {
     if (_spHitIframes > 0.f) { _spHitIframes -= dt; if (_spHitIframes < 0.f) _spHitIframes = 0.f; }
     // Tick shield (invincibility power-up)
     if (_spInvincibleTimer > 0.f) { _spInvincibleTimer -= dt; if (_spInvincibleTimer < 0.f) _spInvincibleTimer = 0.f; }
+    // Tick infinite fire
+    if (_spInfiniteFireTimer > 0.f) { _spInfiniteFireTimer -= dt; if (_spInfiniteFireTimer < 0.f) _spInfiniteFireTimer = 0.f; }
 
     // Overheat: if firing, drain heat; otherwise regenerate
     bool shootHeld = !_gameOver && IsKeyDown(KEY_SPACE);
-    if (shootHeld) {
-        _spHeat -= _spHeatDrainPerSec * dt;
+    if (_spInfiniteFireTimer > 0.f) {
+        // While infinite fire is active, keep heat full and don't drain
+        _spHeat = 1.0f;
     } else {
-        _spHeat += _spHeatRegenPerSec * dt;
+        if (shootHeld) {
+            _spHeat -= _spHeatDrainPerSec * dt;
+        } else {
+            _spHeat += _spHeatRegenPerSec * dt;
+        }
+        if (_spHeat < 0.f) _spHeat = 0.f; if (_spHeat > 1.f) _spHeat = 1.f;
     }
-    if (_spHeat < 0.f) _spHeat = 0.f; if (_spHeat > 1.f) _spHeat = 1.f;
 
-    // Player shooting: Space creates a bullet with cooldown; disabled when overheated (_spHeat == 0)
-    if (shootHeld && _spShootCooldown <= 0.f && _spHeat > 0.f) {
+    // Player shooting: Space creates a bullet with cooldown; during InfiniteFire, ignore heat gating
+    if (shootHeld && _spShootCooldown <= 0.f && (_spHeat > 0.f || _spInfiniteFireTimer > 0.f)) {
         if (auto* pp = _spWorld->get<rt::components::Position>(_spPlayer)) {
             float bx = pp->x + 24.f; // from player front
             float by = pp->y + 6.f;  // roughly center
@@ -293,7 +302,7 @@ void Screens::updateSingleplayerWorld(float dt) {
                         std::uniform_real_distribution<float> ydist(minY, maxY);
                         float y = ydist(_spRng);
                         float x = (float)screenW + _spPowerupRadius + 8.f;
-                        // Choose type with 25% each among 4 slots (2 reserved for future types)
+                        // Choose type with 25% each among 4 slots
                         std::uniform_int_distribution<int> tdist(0, 3);
                         int slot = tdist(_spRng);
                         if (slot == 0) {
@@ -303,7 +312,7 @@ void Screens::updateSingleplayerWorld(float dt) {
                         } else if (slot == 2) {
                             _spPowerups.push_back({x, y, -_spPowerupSpeed, _spPowerupRadius, SpPowerupType::ClearBoard});
                         } else {
-                            // slots 2 and 3 reserved for future power-ups: no spawn for now
+                            _spPowerups.push_back({x, y, -_spPowerupSpeed, _spPowerupRadius, SpPowerupType::InfiniteFire});
                         }
                         // Schedule next threshold
                         std::uniform_int_distribution<int> dd(_spPowerupMinPts, _spPowerupMaxPts);
@@ -382,12 +391,14 @@ void Screens::updateSingleplayerWorld(float dt) {
                             } else if (slot == 2) {
                                 _spPowerups.push_back({x, y, -_spPowerupSpeed, _spPowerupRadius, SpPowerupType::ClearBoard});
                             } else {
-                                // slot 3 reserved: no spawn
+                                _spPowerups.push_back({x, y, -_spPowerupSpeed, _spPowerupRadius, SpPowerupType::InfiniteFire});
                             }
                             std::uniform_int_distribution<int> dd(_spPowerupMinPts, _spPowerupMaxPts);
                             _spNextPowerupScore += dd(_spRng);
                         }
                     }
+                } else if (pu.type == SpPowerupType::InfiniteFire) {
+                    _spInfiniteFireTimer = _spInfiniteFireDuration;
                 }
                 remove = true;
             }
@@ -445,17 +456,24 @@ void Screens::drawSingleplayerWorld() {
         Rectangle rect{b.x, b.y, b.w, b.h};
         DrawRectangleRec(rect, (Color){240, 220, 80, 255});
     }
-    // draw power-ups (green: life, blue: invincibility, purple: clear board)
+    // draw power-ups (green: life, blue: invincibility, purple: clear board, yellow: infinite fire)
     for (auto& pu : _spPowerups) {
         Color fill;
         Color line;
         if (pu.type == SpPowerupType::Invincibility) {
+            // blue circle for invincibility
             fill = (Color){80, 170, 255, 220};
             line = (Color){120, 200, 255, 255};
         } else if (pu.type == SpPowerupType::ClearBoard) {
+            // purple circle for clear board
             fill = (Color){170, 80, 200, 230};
             line = (Color){210, 120, 240, 255};
+        } else if (pu.type == SpPowerupType::InfiniteFire) {
+            // yellow sphere for infinite fire
+            fill = (Color){240, 220, 80, 230};
+            line = (Color){255, 240, 120, 255};
         } else {
+            // green circle for extra life
             fill = (Color){100, 220, 120, 255};
             line = (Color){60, 160, 80, 255};
         }
