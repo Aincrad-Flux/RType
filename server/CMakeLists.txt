@@ -2,6 +2,9 @@ add_executable(r-type_server
         src/main.cpp
         src/UdpServer.cpp
         src/TcpServer.cpp
+        src/network/NetworkManager.cpp
+        src/gameplay/GameSession.cpp
+        src/instance/MatchInstance.cpp
 )
 
 target_include_directories(r-type_server PRIVATE include)
