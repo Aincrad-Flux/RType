@@ -30,49 +30,59 @@ void GameSession::stop() {
     if (gameThread_.joinable()) gameThread_.join();
 }
 
+void GameSession::onTcpHello(const std::string& username, const std::string& ip) {
+    auto e = reg_.create(); // create player
+    reg_.emplace<rt::game::Transform>(e, rt::game::Transform{50.f, 100.f + static_cast<float>(pendingByIp_.size()) * 40.f});
+    reg_.emplace<rt::game::Velocity>(e, rt::game::Velocity{0.f, 0.f});
+    reg_.emplace<rt::game::NetType>(e, rt::game::NetType{rtype::net::EntityType::Player});
+    reg_.emplace<rt::game::ColorRGBA>(e, rt::game::ColorRGBA{0x55AAFFFFu});
+    reg_.emplace<rt::game::PlayerInput>(e, rt::game::PlayerInput{0, 150.f});
+    reg_.emplace<rt::game::Shooter>(e, rt::game::Shooter{0.f, 0.15f, 320.f});
+    reg_.emplace<rt::game::ChargeGun>(e, rt::game::ChargeGun{0.f, 2.0f, false});
+    reg_.emplace<rt::game::Size>(e, rt::game::Size{20.f, 12.f});
+    reg_.emplace<rt::game::Score>(e, rt::game::Score{0});
+
+    playerInputBits_[e] = 0;
+    playerLives_[e] = 4;
+    playerScores_[e] = 0;
+    playerNames_[e] = username.empty() ? (std::string("Player") + std::to_string(e)) : username;
+
+    // store until UDP endpoint binds
+    pendingByIp_[ip] = e;
+}
+
+void GameSession::bindUdpEndpoint(const asio::ip::udp::endpoint& ep, std::uint32_t playerId) {
+    auto key = makeKey(ep);
+    endpointToPlayerId_[key] = playerId;
+    keyToEndpoint_[key] = ep;
+    lastSeen_[key] = std::chrono::steady_clock::now();
+    broadcastRoster();
+    maybeStartGame();
+}
+
 void GameSession::onUdpPacket(const asio::ip::udp::endpoint& from, const char* data, std::size_t size) {
+    auto key = makeKey(from);
+
+    // If endpoint not bound, check for pending player from TCP
+    if (endpointToPlayerId_.find(key) == endpointToPlayerId_.end()) {
+        auto ip = from.address().to_string();
+        auto it = pendingByIp_.find(ip);
+        if (it != pendingByIp_.end()) {
+            // bind endpoint to pending player
+            bindUdpEndpoint(from, it->second);
+            pendingByIp_.erase(it);
+        } else {
+            return;
+        }
+    }
+
     if (size < sizeof(rtype::net::Header)) return;
     const auto* header = reinterpret_cast<const rtype::net::Header*>(data);
     if (header->version != rtype::net::ProtocolVersion) return;
+
+    lastSeen_[key] = std::chrono::steady_clock::now();
     const char* payload = data + sizeof(rtype::net::Header);
     std::size_t payloadSize = size - sizeof(rtype::net::Header);
-    auto key = makeKey(from);
-    lastSeen_[key] = std::chrono::steady_clock::now();
-
-    if (header->type == rtype::net::MsgType::Hello) {
-        keyToEndpoint_[key] = from;
-        if (endpointToPlayerId_.find(key) == endpointToPlayerId_.end()) {
-            auto e = reg_.create();
-            reg_.emplace<rt::game::Transform>(e, rt::game::Transform{50.f, 100.f + static_cast<float>(endpointToPlayerId_.size()) * 40.f});
-            reg_.emplace<rt::game::Velocity>(e, rt::game::Velocity{0.f, 0.f});
-            reg_.emplace<rt::game::NetType>(e, rt::game::NetType{rtype::net::EntityType::Player});
-            reg_.emplace<rt::game::ColorRGBA>(e, rt::game::ColorRGBA{0x55AAFFFFu});
-            reg_.emplace<rt::game::PlayerInput>(e, rt::game::PlayerInput{0, 150.f});
-            reg_.emplace<rt::game::Shooter>(e, rt::game::Shooter{0.f, 0.15f, 320.f});
-            reg_.emplace<rt::game::ChargeGun>(e, rt::game::ChargeGun{0.f, 2.0f, false});
-            reg_.emplace<rt::game::Size>(e, rt::game::Size{20.f, 12.f});
-            reg_.emplace<rt::game::Score>(e, rt::game::Score{0});
-
-            endpointToPlayerId_[key] = e;
-            playerInputBits_[e] = 0;
-            playerLives_[e] = 4;
-            playerScores_[e] = 0;
-            std::string uname;
-            if (payloadSize > 0) {
-                uname.assign(payload, payload + std::min<std::size_t>(payloadSize, 15));
-                while (!uname.empty() && (uname.back() == '\0' || uname.back() == ' ')) uname.pop_back();
-            }
-            if (uname.empty()) uname = "Player" + std::to_string(e);
-            playerNames_[e] = uname;
-
-            broadcastRoster();
-            maybeStartGame();
-        }
-
-        rtype::net::Header ack{0, rtype::net::MsgType::HelloAck, rtype::net::ProtocolVersion};
-        send_(from, &ack, sizeof(ack));
-        return;
-    }
 
     if (header->type == rtype::net::MsgType::Input) {
         if (payloadSize >= sizeof(rtype::net::InputPacket)) {
