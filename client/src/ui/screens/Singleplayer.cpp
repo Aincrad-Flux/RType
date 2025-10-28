@@ -300,6 +300,8 @@ void Screens::updateSingleplayerWorld(float dt) {
                             _spPowerups.push_back({x, y, -_spPowerupSpeed, _spPowerupRadius, SpPowerupType::Life});
                         } else if (slot == 1) {
                             _spPowerups.push_back({x, y, -_spPowerupSpeed, _spPowerupRadius, SpPowerupType::Invincibility});
+                        } else if (slot == 2) {
+                            _spPowerups.push_back({x, y, -_spPowerupSpeed, _spPowerupRadius, SpPowerupType::ClearBoard});
                         } else {
                             // slots 2 and 3 reserved for future power-ups: no spawn for now
                         }
@@ -339,6 +341,53 @@ void Screens::updateSingleplayerWorld(float dt) {
                     if (_playerLives < _maxLives) _playerLives += 1;
                 } else if (pu.type == SpPowerupType::Invincibility) {
                     _spInvincibleTimer = _spInvincibleDuration;
+                } else if (pu.type == SpPowerupType::ClearBoard) {
+                    // Kill all enemies currently visible on screen and add 50 points per enemy
+                    int screenW = GetScreenWidth();
+                    int screenH = GetScreenHeight();
+                    int killed = 0;
+                    for (std::size_t ei = 0; ei < _spEnemies.size(); ) {
+                        auto& en = _spEnemies[ei];
+                        if (auto* ep = _spWorld->get<rt::components::Position>(en.id)) {
+                            float ex = ep->x, ey = ep->y, ew = 24.f, eh = 16.f;
+                            bool onScreen = !(ex + ew < 0.f || ex > (float)screenW || ey + eh < 0.f || ey > (float)screenH);
+                            if (onScreen) {
+                                _spWorld->destroy(en.id);
+                                _spEnemies.erase(_spEnemies.begin() + (long)ei);
+                                ++killed;
+                                continue;
+                            }
+                        }
+                        ++ei;
+                    }
+                    if (killed > 0) {
+                        _score += 50 * killed;
+                        // Check and spawn power-ups when crossing threshold(s)
+                        while (_score >= _spNextPowerupScore) {
+                            int h = GetScreenHeight();
+                            float topMargin = h * 0.10f;
+                            float bottomMargin = h * 0.05f;
+                            float minY = topMargin + 16.f;
+                            float maxY = h - bottomMargin - 16.f;
+                            if (maxY < minY) maxY = minY + 1.f;
+                            std::uniform_real_distribution<float> ydist(minY, maxY);
+                            float y = ydist(_spRng);
+                            float x = (float)screenW + _spPowerupRadius + 8.f;
+                            std::uniform_int_distribution<int> tdist(0, 3);
+                            int slot = tdist(_spRng);
+                            if (slot == 0) {
+                                _spPowerups.push_back({x, y, -_spPowerupSpeed, _spPowerupRadius, SpPowerupType::Life});
+                            } else if (slot == 1) {
+                                _spPowerups.push_back({x, y, -_spPowerupSpeed, _spPowerupRadius, SpPowerupType::Invincibility});
+                            } else if (slot == 2) {
+                                _spPowerups.push_back({x, y, -_spPowerupSpeed, _spPowerupRadius, SpPowerupType::ClearBoard});
+                            } else {
+                                // slot 3 reserved: no spawn
+                            }
+                            std::uniform_int_distribution<int> dd(_spPowerupMinPts, _spPowerupMaxPts);
+                            _spNextPowerupScore += dd(_spRng);
+                        }
+                    }
                 }
                 remove = true;
             }
@@ -396,13 +445,16 @@ void Screens::drawSingleplayerWorld() {
         Rectangle rect{b.x, b.y, b.w, b.h};
         DrawRectangleRec(rect, (Color){240, 220, 80, 255});
     }
-    // draw power-ups (green: life, blue: invincibility)
+    // draw power-ups (green: life, blue: invincibility, purple: clear board)
     for (auto& pu : _spPowerups) {
         Color fill;
         Color line;
         if (pu.type == SpPowerupType::Invincibility) {
             fill = (Color){80, 170, 255, 220};
             line = (Color){120, 200, 255, 255};
+        } else if (pu.type == SpPowerupType::ClearBoard) {
+            fill = (Color){170, 80, 200, 230};
+            line = (Color){210, 120, 240, 255};
         } else {
             fill = (Color){100, 220, 120, 255};
             line = (Color){60, 160, 80, 255};

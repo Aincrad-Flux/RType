@@ -128,8 +128,8 @@ private:
     float _spHeat = 1.0f;           // 0..1
     float _spHeatDrainPerSec = 0.30f;
     float _spHeatRegenPerSec = 0.15f;
-    // Singleplayer power-ups (Life / Invincibility)
-    enum class SpPowerupType { Life = 0, Invincibility = 1 };
+    // Singleplayer power-ups (Life / Invincibility / ClearBoard)
+    enum class SpPowerupType { Life = 0, Invincibility = 1, ClearBoard = 2 };
     struct SpPowerup { float x; float y; float vx; float radius; SpPowerupType type; };
     std::vector<SpPowerup> _spPowerups;
     int _spNextPowerupScore = 1500;        // next score threshold for spawning a power-up
