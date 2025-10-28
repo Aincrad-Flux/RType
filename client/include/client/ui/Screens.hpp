@@ -128,14 +128,19 @@ private:
     float _spHeat = 1.0f;           // 0..1
     float _spHeatDrainPerSec = 0.30f;
     float _spHeatRegenPerSec = 0.15f;
-    // Singleplayer power-ups (green spheres adding 1 life)
-    struct SpPowerup { float x; float y; float vx; float radius; };
+    // Singleplayer power-ups (Life / Invincibility)
+    enum class SpPowerupType { Life = 0, Invincibility = 1 };
+    struct SpPowerup { float x; float y; float vx; float radius; SpPowerupType type; };
     std::vector<SpPowerup> _spPowerups;
     int _spNextPowerupScore = 1500;        // next score threshold for spawning a power-up
     int _spPowerupMinPts = 1500;           // min interval in points between spawns
     int _spPowerupMaxPts = 2000;           // max interval in points between spawns
     float _spPowerupSpeed = 90.f;          // pixels per second to the left
     float _spPowerupRadius = 9.f;          // visual/collision radius
+    // Invincibility shield state
+    float _spInvincibleTimer = 0.f;        // seconds remaining of invincibility (shield)
+    float _spInvincibleDuration = 10.0f;   // seconds of invincibility on pickup
+    float _spShieldRadius = 20.0f;         // visual radius of the shield around player
     // We keep systems owned by the world; stored here for clarity
     bool _spInitialized = false;
 
