@@ -89,7 +89,7 @@ class FormationSpawnSystem : public rt::ecs::System {
   std::uint8_t difficulty_ = 1; // 0..2
   float baseInterval_ = 3.0f;
   float countMultiplier_ = 1.0f;
-  std::uint8_t shooterPercent_ = 25; // 0..100
+  std::uint8_t shooterPercent_ = 20; // 0..100 - percentage of enemies that shoot
     // Internal helpers to create formations
     rt::ecs::Entity spawnSnake(rt::ecs::Registry& r, float y, int count);
     rt::ecs::Entity spawnLine(rt::ecs::Registry& r, float y, int count);

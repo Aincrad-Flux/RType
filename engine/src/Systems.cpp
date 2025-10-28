@@ -531,6 +531,35 @@ void CollisionSystem::update(rt::ecs::Registry& r, float dt) {
             }
         }
     }
+
+    // Player-Enemy direct collision
+    for (auto& [player, _] : r.storage<PlayerInput>().data()) {
+        // Skip if player is invincible
+        if (auto* inv = r.get<Invincible>(player)) {
+            if (inv->timeLeft > 0.f) continue;
+        }
+
+        for (auto& [enemy, __] : r.storage<EnemyTag>().data()) {
+            if (intersects(player, enemy)) {
+                // Mark player as hit
+                if (auto* hf = r.get<HitFlag>(player)) {
+                    hf->value = true;
+                } else {
+                    r.emplace<HitFlag>(player, {true});
+                }
+                // Apply brief invincibility
+                if (auto* inv = r.get<Invincible>(player)) {
+                    inv->timeLeft = std::max(inv->timeLeft, 1.0f);
+                } else {
+                    r.emplace<Invincible>(player, {1.0f});
+                }
+                // Destroy the enemy on collision
+                toDestroy.push_back(enemy);
+                break; // Only one collision per player per frame
+            }
+        }
+    }
+
     for (auto e : toDestroy) r.destroy(e);
 }
 
