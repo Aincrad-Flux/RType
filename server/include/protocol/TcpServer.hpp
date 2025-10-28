@@ -12,9 +12,7 @@ public:
 
     void start();
     void stop();
-
-    // Called by UdpServer when enough players => StartGame reliably
-    void broadcastStartGame();
+    void broadcastStartGame(); //start when >= 2 players
 
 private:
     using SocketPtr = std::shared_ptr<asio::ip::tcp::socket>;
@@ -29,4 +27,5 @@ private:
     bool running_{false};
 };
 
-} // namespace rtype::server
+}
+
