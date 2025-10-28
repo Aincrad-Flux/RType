@@ -496,8 +496,7 @@ void CollisionSystem::update(rt::ecs::Registry& r, float dt) {
                     // award score to bullet owner if any
                     if (auto* bo = r.get<BulletOwner>(b)) {
                         if (auto* sc = r.get<Score>(bo->owner)) {
-                            bool isShooter = r.get<EnemyShooter>(e) != nullptr;
-                            sc->value += isShooter ? 200 : 100;
+                            sc->value += 50;
                         }
                     }
                     // Beams persist through multiple hits in the same frame; regular bullets are destroyed on first hit

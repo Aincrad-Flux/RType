@@ -19,10 +19,14 @@ namespace {
         std::unique_ptr<asio::io_context> io;
         std::unique_ptr<asio::ip::udp::socket> sock;
         asio::ip::udp::endpoint server;
+
+        // ✅ NEW: TCP control connection
+        std::unique_ptr<asio::ip::tcp::socket> tcp;
+        bool tcpReady = false;
+        bool startGame = false;
     } g;
-    // Scale factor for enemy visual hitbox (only affects the red outline)
-    static constexpr float kEnemyHitboxScale = 1.25f; // 25% larger than sprite bounds
-    // Server-side AABB for small enemies (EntityType 2 default)
+
+    static constexpr float kEnemyHitboxScale = 1.25f;
     static constexpr float kEnemyAabbW = 27.0f;
     static constexpr float kEnemyAabbH = 18.0f;
 }
@@ -322,22 +326,63 @@ void Screens::drawNotEnoughPlayers(ScreenState& screen) {
 
 void Screens::ensureNetSetup() {
     if (g.io) return;
+
     g.io = std::make_unique<asio::io_context>();
-    g.sock = std::make_unique<asio::ip::udp::socket>(*g.io);
-    g.sock->open(asio::ip::udp::v4());
-    asio::ip::udp::resolver resolver(*g.io);
-    g.server = *resolver.resolve(asio::ip::udp::v4(), _serverAddr, _serverPort).begin();
-    g.sock->non_blocking(true);
-    _serverReturnToMenu = false;
-    // Re-send Hello on gameplay entry so server registers this endpoint for state
-    rtype::net::Header hdr{};
-    hdr.version = rtype::net::ProtocolVersion;
-    hdr.type = rtype::net::MsgType::Hello;
-    hdr.size = static_cast<std::uint16_t>(_username.size());
-    std::vector<char> out(sizeof(rtype::net::Header) + _username.size());
-    std::memcpy(out.data(), &hdr, sizeof(hdr));
-    if (!_username.empty()) std::memcpy(out.data() + sizeof(hdr), _username.data(), _username.size());
-    g.sock->send_to(asio::buffer(out), g.server);
+
+    // ----- TCP CONNECT FIRST -----
+    try {
+        g.tcp = std::make_unique<asio::ip::tcp::socket>(*g.io);
+        asio::ip::tcp::resolver r(*g.io);
+        auto res = r.resolve(_serverAddr, std::to_string(std::stoi(_serverPort) + 1));
+        asio::connect(*g.tcp, res);
+
+        g.tcpReady = false;
+
+        // Wait max 1 sec for TcpWelcome
+        double start = GetTime();
+        while (!g.tcpReady && GetTime() - start < 1.0) {
+            pumpTcpOnce();
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+
+        if (!g.tcpReady) {
+            logMessage("TCP handshake failed", "ERROR");
+            teardownNet();
+            return;
+        }
+    } catch (...) {
+        logMessage("TCP connection failed", "ERROR");
+        teardownNet();
+        return;
+    }
+
+    // ----- UDP HELLO -----
+    try {
+        g.sock = std::make_unique<asio::ip::udp::socket>(*g.io);
+        g.sock->open(asio::ip::udp::v4());
+        g.sock->non_blocking(true);
+
+        asio::ip::udp::resolver res(*g.io);
+        g.server = *res.resolve(asio::ip::udp::v4(), _serverAddr, _serverPort).begin();
+
+        rtype::net::Header hdr{};
+        hdr.version = rtype::net::ProtocolVersion;
+        hdr.type = rtype::net::MsgType::Hello;
+        hdr.size = static_cast<std::uint16_t>(_username.size());
+
+        std::vector<char> out(sizeof(hdr) + _username.size());
+        std::memcpy(out.data(), &hdr, sizeof(hdr));
+        if (!_username.empty())
+            std::memcpy(out.data()+sizeof(hdr), _username.data(), _username.size());
+
+        g.sock->send_to(asio::buffer(out), g.server);
+    } catch (...) {
+        logMessage("UDP setup failed", "ERROR");
+        teardownNet();
+        return;
+    }
+
+    _connected = true;
 }
 
 void Screens::sendDisconnect() {
@@ -352,17 +397,43 @@ void Screens::sendDisconnect() {
     g.sock->send_to(asio::buffer(buf), g.server, 0, ec);
 }
 
+static void pumpTcpOnce() {
+    if (!g.tcp || !g.tcp->is_open()) return;
+
+    rtype::net::Header hdr{};
+    asio::error_code ec;
+
+    g.tcp->non_blocking(true, ec);
+    std::size_t n = g.tcp->read_some(asio::buffer(&hdr, sizeof(hdr)), ec);
+    if (ec || n < sizeof(hdr)) return;
+    if (hdr.version != rtype::net::ProtocolVersion) return;
+
+    if (hdr.type == rtype::net::MsgType::TcpWelcome) {
+        Screens::logMessage("TCP: Welcome ✅");
+        g.tcpReady = true;
+    } else if (hdr.type == rtype::net::MsgType::StartGame) {
+        Screens::logMessage("TCP: StartGame ✅");
+        g.startGame = true;
+    }
+}
+
 void Screens::teardownNet() {
+    // UDP
     if (g.sock && g.sock->is_open()) {
-        // Best-effort notify server that we intentionally disconnect
         sendDisconnect();
         asio::error_code ec; g.sock->close(ec);
     }
     g.sock.reset();
+
+    // TCP
+    if (g.tcp && g.tcp->is_open()) {
+        asio::error_code ec; g.tcp->close(ec);
+    }
+    g.tcp.reset();
+
     g.io.reset();
-    // Reset sprite assignments when disconnecting
-    _spriteRowById.clear();
-    _nextSpriteRow = 0;
+    _entities.clear();
+    _serverReturnToMenu = false;
 }
 
 void Screens::sendInput(std::uint8_t bits) {
@@ -470,20 +541,20 @@ void Screens::drawWaiting(ScreenState& screen) {
     int h = GetScreenHeight();
     int baseFont = baseFontFromHeight(h);
 
-    // Ensure socket is ready (in case we came here directly)
+    // Ensure sockets & TCP handshake are ready
     ensureNetSetup();
 
-    // Pump one network packet if available to update entities
+    // Process inbound network data
     pumpNetworkOnce();
+    pumpTcpOnce(); // NEW: process TCP StartGame signal
 
     if (_serverReturnToMenu) {
-        // Server asked us to return: cleanly leave and show info screen
         leaveSession();
         screen = ScreenState::NotEnoughPlayers;
         return;
     }
 
-    // Count players in the latest world snapshot
+    // Count players based on latest state update from server
     int playerCount = 0;
     for (const auto& e : _entities) {
         if (e.type == 1)
@@ -495,7 +566,6 @@ void Screens::drawWaiting(ScreenState& screen) {
     std::string sub = "Players connected: " + std::to_string(playerCount) + "/2";
     titleCentered(sub.c_str(), (int)(h * 0.40f), baseFont, RAYWHITE);
 
-    // Simple animated dots
     int dots = ((int)(GetTime() * 2)) % 4;
     std::string hint = "The game will start automatically" + std::string(dots, '.');
     titleCentered(hint.c_str(), (int)(h * 0.50f), baseFont, LIGHTGRAY);
@@ -505,7 +575,9 @@ void Screens::drawWaiting(ScreenState& screen) {
     int btnHeight = (int)(h * 0.08f);
     int x = (w - btnWidth) / 2;
     int y = (int)(h * 0.70f);
-    if (button({(float)x, (float)y, (float)btnWidth, (float)btnHeight}, "Cancel", baseFont, BLACK, LIGHTGRAY, GRAY)) {
+
+    if (button({(float)x, (float)y, (float)btnWidth, (float)btnHeight},
+               "Cancel", baseFont, BLACK, LIGHTGRAY, GRAY)) {
         teardownNet();
         _connected = false;
         _entities.clear();
@@ -513,13 +585,16 @@ void Screens::drawWaiting(ScreenState& screen) {
         return;
     }
 
-    // Transition to gameplay when at least 2 players are present and assets exist
+    // Authoritative signal from server -- StartGame over TCP
+    if (g.startGame) {
+        screen = ScreenState::Gameplay;
+        return;
+    }
+
+    // Fallback development mode: auto-start when player count >= 2
     if (playerCount >= 2) {
-        if (assetsAvailable()) {
-            screen = ScreenState::Gameplay;
-        } else {
-            titleCentered("Missing spritesheet assets. Place sprites/ and try again.", (int)(h * 0.80f), baseFont, RED);
-        }
+        screen = ScreenState::Gameplay;
+        return;
     }
 }
 

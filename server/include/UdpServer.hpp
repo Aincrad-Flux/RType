@@ -15,60 +15,58 @@ namespace rt { namespace game { class FormationSpawnSystem; } }
 
 namespace rtype::server {
 
+class TcpServer;
+
 class UdpServer {
-  public:
-    explicit UdpServer(unsigned short port);
+public:
+    UdpServer(asio::io_context& io, unsigned short port);
     ~UdpServer();
+
     void start();
     void stop();
-  private:
+
+    void setTcpServer(TcpServer* tcp) { tcp_ = tcp; }
+
+private:
     void doReceive();
     void doSend(const asio::ip::udp::endpoint& to, const void* data, std::size_t size);
     void handlePacket(const asio::ip::udp::endpoint& from, const char* data, std::size_t size);
+
     void gameLoop();
-    void broadcastState();
-  void broadcastRoster();
-  void broadcastLivesUpdate(std::uint32_t id, std::uint8_t lives);
-  void broadcastScoreUpdate(std::uint32_t id, std::int32_t score);
-    void broadcastLobbyStatus();
-    void broadcastGameOver(std::uint8_t reason = 0);
     void checkTimeouts();
     void removeClient(const std::string& key);
 
-    asio::io_context io_;
+    void broadcastState();
+    void broadcastRoster();
+    void broadcastLivesUpdate(std::uint32_t id, std::uint8_t lives);
+
+    void maybeStartGame(); // triggers StartGame over TCP
+
+    asio::io_context& io_;
     asio::ip::udp::socket socket_;
     std::array<char, 2048> buffer_{};
     asio::ip::udp::endpoint remote_;
-    std::thread netThread_;
+
     std::thread gameThread_;
     bool running_ = false;
-  // state broadcast throttle (to reduce network bursts)
-  std::chrono::steady_clock::time_point lastStateSend_{};
-  double stateHz_ = 20.0; // send world state 20 times per second
 
-    // gameplay state
+    std::chrono::steady_clock::time_point lastStateSend_{};
+    double stateHz_ = 20.0;
+
     std::unordered_map<std::string, std::uint32_t> endpointToPlayerId_;
     std::unordered_map<std::string, asio::ip::udp::endpoint> keyToEndpoint_;
     std::unordered_map<std::uint32_t, std::uint8_t> playerInputBits_;
-  std::unordered_map<std::uint32_t, std::string> playerNames_;
-  std::unordered_map<std::uint32_t, std::uint8_t> playerLives_; // 0..10
-  std::unordered_map<std::uint32_t, std::int32_t> playerScores_;
-  std::int32_t lastTeamScore_ = 0; // shared score across all players
-  std::chrono::steady_clock::time_point lastRosterSend_{}; // kept if we throttle in future
-    // ECS registry holds all entities/components
+    std::unordered_map<std::uint32_t, std::string> playerNames_;
+    std::unordered_map<std::uint32_t, std::uint8_t> playerLives_;
+    std::unordered_map<std::uint32_t, std::int32_t> playerScores_;
+    std::int32_t lastTeamScore_ = 0;
+
     rt::ecs::Registry reg_;
     std::mt19937 rng_;
-    std::unordered_map<std::string,
-    std::chrono::steady_clock::time_point> lastSeen_;
+    std::unordered_map<std::string, std::chrono::steady_clock::time_point> lastSeen_;
 
-  // Lobby / match state
-  std::uint32_t hostId_ = 0;
-  std::uint8_t lobbyBaseLives_ = 4;    // 1..6
-  std::uint8_t lobbyDifficulty_ = 1;   // 0=Easy,1=Normal,2=Hard
-  std::uint8_t shooterPercent_ = 25;   // percent of enemies that can shoot
-  bool matchStarted_ = false;
-  // Cached pointer to formation spawner for difficulty tuning
-  rt::game::FormationSpawnSystem* spawnSys_ = nullptr;
+    TcpServer* tcp_ = nullptr;
+    bool gameStarted_ = false;
 };
 
-}
+} // namespace rtype::server

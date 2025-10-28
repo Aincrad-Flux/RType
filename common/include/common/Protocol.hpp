@@ -19,11 +19,9 @@ enum class MsgType : std::uint8_t {
     // New messages
     Disconnect,     // client -> server: explicit disconnect notice
     ReturnToMenu,   // server -> client: ask client to return to menu (e.g., too few players)
-    // Lobby/match flow
-    LobbyStatus,    // server -> client: host id and current lobby settings
-    LobbyConfig,    // client (host) -> server: change settings (difficulty, baseLives)
-    StartMatch,     // client (host) -> server: start the game
-    GameOver        // server -> client: match ended (all players dead)
+
+    TcpWelcome = 100,
+    StartGame  = 101
 };
 
 struct Header {
