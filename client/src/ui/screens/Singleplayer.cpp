@@ -4,6 +4,8 @@
 #include "widgets/Title.hpp"
 #include <raylib.h>
 #include <cmath>
+#include <random>
+#include <algorithm>
 
 namespace client { namespace ui {
 
@@ -114,6 +116,16 @@ void Screens::initSingleplayerWorld() {
     player.add<rt::components::Size>(24.f, 16.f);
     _spPlayer = player;
 
+    // Reset score at the start of a singleplayer run
+    _score = 0;
+
+    // Reset power-ups and schedule first threshold between 1500 and 2000 points
+    _spPowerups.clear();
+    {
+        std::uniform_int_distribution<int> dd(_spPowerupMinPts, _spPowerupMaxPts);
+        _spNextPowerupScore = dd(_spRng);
+    }
+
     // Start with an initial simple line
     _spEnemies.clear();
     _spBullets.clear();
@@ -123,6 +135,9 @@ void Screens::initSingleplayerWorld() {
     _spNextFormation = 0;
     // Seed RNG with time
     std::random_device rd; _spRng.seed(rd());
+    // Reset power-up states
+    _spInvincibleTimer = 0.f;
+    _spInfiniteFireTimer = 0.f;
     // Schedule first spawn with random delay
     spScheduleNextSpawn();
     _spInitialized = true;
@@ -137,6 +152,8 @@ void Screens::shutdownSingleplayerWorld() {
     _singleplayerActive = false;
     _spPaused = false;
     _gameOver = false;
+    _spInvincibleTimer = 0.f;
+    _spInfiniteFireTimer = 0.f;
 }
 
 void Screens::updateSingleplayerWorld(float dt) {
@@ -162,18 +179,27 @@ void Screens::updateSingleplayerWorld(float dt) {
     if (_spShootCooldown < 0.f) _spShootCooldown = 0.f;
     // Tick invincibility frames
     if (_spHitIframes > 0.f) { _spHitIframes -= dt; if (_spHitIframes < 0.f) _spHitIframes = 0.f; }
+    // Tick shield (invincibility power-up)
+    if (_spInvincibleTimer > 0.f) { _spInvincibleTimer -= dt; if (_spInvincibleTimer < 0.f) _spInvincibleTimer = 0.f; }
+    // Tick infinite fire
+    if (_spInfiniteFireTimer > 0.f) { _spInfiniteFireTimer -= dt; if (_spInfiniteFireTimer < 0.f) _spInfiniteFireTimer = 0.f; }
 
     // Overheat: if firing, drain heat; otherwise regenerate
     bool shootHeld = !_gameOver && IsKeyDown(KEY_SPACE);
-    if (shootHeld) {
-        _spHeat -= _spHeatDrainPerSec * dt;
+    if (_spInfiniteFireTimer > 0.f) {
+        // While infinite fire is active, keep heat full and don't drain
+        _spHeat = 1.0f;
     } else {
-        _spHeat += _spHeatRegenPerSec * dt;
+        if (shootHeld) {
+            _spHeat -= _spHeatDrainPerSec * dt;
+        } else {
+            _spHeat += _spHeatRegenPerSec * dt;
+        }
+        if (_spHeat < 0.f) _spHeat = 0.f; if (_spHeat > 1.f) _spHeat = 1.f;
     }
-    if (_spHeat < 0.f) _spHeat = 0.f; if (_spHeat > 1.f) _spHeat = 1.f;
 
-    // Player shooting: Space creates a bullet with cooldown; disabled when overheated (_spHeat == 0)
-    if (shootHeld && _spShootCooldown <= 0.f && _spHeat > 0.f) {
+    // Player shooting: Space creates a bullet with cooldown; during InfiniteFire, ignore heat gating
+    if (shootHeld && _spShootCooldown <= 0.f && (_spHeat > 0.f || _spInfiniteFireTimer > 0.f)) {
         if (auto* pp = _spWorld->get<rt::components::Position>(_spPlayer)) {
             float bx = pp->x + 24.f; // from player front
             float by = pp->y + 6.f;  // roughly center
@@ -262,6 +288,10 @@ void Screens::updateSingleplayerWorld(float dt) {
                     // Enemy dies on hit: remove entity and from list
                     _spWorld->destroy(en.id);
                     _spEnemies.erase(_spEnemies.begin() + (long)ei);
+                    // Award score: +50 per enemy killed
+                    _score += 50;
+                    // Spawn power-ups for any crossed thresholds
+                    spHandleScoreThresholdSpawns(screenW);
                     destroyBullet = true;
                 }
             }
@@ -269,15 +299,20 @@ void Screens::updateSingleplayerWorld(float dt) {
         if (destroyBullet) _spBullets.erase(_spBullets.begin() + (long)i);
         else ++i;
     }
+
+    // Move power-ups and handle pickup/offscreen
+    if (!_gameOver) {
+        spUpdatePowerups(dt);
+    }
+
     _spWorld->update(dt);
 
     // If engine marked player as collided, decrement life and clear flag
     if (auto* col = _spWorld->get<rt::components::Collided>(_spPlayer)) {
-        if (col->value && _spHitIframes <= 0.f && _playerLives > 0) {
+        if (col->value && _spHitIframes <= 0.f && _playerLives > 0 && _spInvincibleTimer <= 0.f) {
             _playerLives = std::max(0, _playerLives - 1);
             _spHitIframes = _spHitIframesDuration;
         }
-        // Clear marker for next frame detection
         col->value = false;
     }
     if (_playerLives <= 0) {
@@ -287,11 +322,21 @@ void Screens::updateSingleplayerWorld(float dt) {
 
 void Screens::drawSingleplayerWorld() {
     if (!_spWorld) return;
-    // draw player as a simple rectangle
     auto* p = _spWorld->get<rt::components::Position>(_spPlayer);
     if (p) {
         Rectangle rect{p->x, p->y, 24.f, 16.f};
         DrawRectangleRec(rect, (Color){100, 200, 255, 255});
+        // Draw shield if invincible
+        if (_spInvincibleTimer > 0.f) {
+            int cx = (int)(p->x + 12.f);
+            int cy = (int)(p->y + 8.f);
+            float r = _spShieldRadius;
+            // Translucent blue aura
+            Color fill = (Color){80, 170, 255, 80};
+            Color line = (Color){120, 200, 255, 180};
+            DrawCircle(cx, cy, r, fill);
+            DrawCircleLines(cx, cy, r, line);
+        }
     }
     // draw all enemies as red rectangles
     for (auto& en : _spEnemies) {
@@ -305,6 +350,8 @@ void Screens::drawSingleplayerWorld() {
         Rectangle rect{b.x, b.y, b.w, b.h};
         DrawRectangleRec(rect, (Color){240, 220, 80, 255});
     }
+    // draw power-ups (delegated)
+    spDrawPowerups();
 
     // Draw lives bar at bottom-left: squares representing HP
     int w = GetScreenWidth();
@@ -335,6 +382,125 @@ void Screens::drawSingleplayerWorld() {
     DrawRectangle(barX, barY, fillW, barInnerH, fillC);
     // outline
     DrawRectangleLines(barX, barY, barW, barInnerH, (Color){220, 220, 220, 200});
+
+    // Draw current score at the top-left corner
+    int font = baseFontFromHeight(h);
+    std::string scoreText = std::string("Score: ") + std::to_string(_score);
+    DrawText(scoreText.c_str(), margin, margin, font, RAYWHITE);
+}
+
+// --- Power-ups helpers ---
+void Screens::spHandleScoreThresholdSpawns(int screenW) {
+    while (_score >= _spNextPowerupScore) {
+        int h = GetScreenHeight();
+        float topMargin = h * 0.10f;
+        float bottomMargin = h * 0.05f;
+        float minY = topMargin + 16.f;
+        float maxY = h - bottomMargin - 16.f;
+        if (maxY < minY) maxY = minY + 1.f;
+        std::uniform_real_distribution<float> ydist(minY, maxY);
+        float y = ydist(_spRng);
+        float x = (float)screenW + _spPowerupRadius + 8.f;
+        std::uniform_int_distribution<int> tdist(0, 3);
+        int slot = tdist(_spRng);
+        SpPowerupType type = SpPowerupType::Life;
+        if (slot == 0) type = SpPowerupType::Life;
+        else if (slot == 1) type = SpPowerupType::Invincibility;
+        else if (slot == 2) type = SpPowerupType::ClearBoard;
+        else type = SpPowerupType::InfiniteFire;
+        _spPowerups.push_back({x, y, -_spPowerupSpeed, _spPowerupRadius, type});
+        std::uniform_int_distribution<int> dd(_spPowerupMinPts, _spPowerupMaxPts);
+        _spNextPowerupScore += dd(_spRng);
+    }
+}
+
+void Screens::spUpdatePowerups(float dt) {
+    // Player rectangle for collision
+    float px = 0.f, py = 0.f, pw = 24.f, ph = 16.f;
+    if (auto* pp = _spWorld->get<rt::components::Position>(_spPlayer)) { px = pp->x; py = pp->y; }
+    auto rectCircleHit = [&](float cx, float cy, float r) {
+        float rx1 = px, ry1 = py, rx2 = px + pw, ry2 = py + ph;
+        float closestX = std::clamp(cx, rx1, rx2);
+        float closestY = std::clamp(cy, ry1, ry2);
+        float dx = cx - closestX;
+        float dy = cy - closestY;
+        return (dx*dx + dy*dy) <= (r * r);
+    };
+    int screenW = GetScreenWidth();
+    int screenH = GetScreenHeight();
+
+    for (std::size_t i = 0; i < _spPowerups.size(); ) {
+        auto& pu = _spPowerups[i];
+        pu.x += pu.vx * dt;
+        bool remove = false;
+        // Pickup
+        if (rectCircleHit(pu.x, pu.y, pu.radius)) {
+            switch (pu.type) {
+                case SpPowerupType::Life:
+                    if (_playerLives < _maxLives) _playerLives += 1;
+                    break;
+                case SpPowerupType::Invincibility:
+                    _spInvincibleTimer = _spInvincibleDuration;
+                    break;
+                case SpPowerupType::ClearBoard: {
+                    int killed = 0;
+                    for (std::size_t ei = 0; ei < _spEnemies.size(); ) {
+                        auto& en = _spEnemies[ei];
+                        if (auto* ep = _spWorld->get<rt::components::Position>(en.id)) {
+                            float ex = ep->x, ey = ep->y, ew = 24.f, eh = 16.f;
+                            bool onScreen = !(ex + ew < 0.f || ex > (float)screenW || ey + eh < 0.f || ey > (float)screenH);
+                            if (onScreen) {
+                                _spWorld->destroy(en.id);
+                                _spEnemies.erase(_spEnemies.begin() + (long)ei);
+                                ++killed;
+                                continue;
+                            }
+                        }
+                        ++ei;
+                    }
+                    if (killed > 0) {
+                        _score += 50 * killed;
+                        spHandleScoreThresholdSpawns(screenW);
+                    }
+                    break;
+                }
+                case SpPowerupType::InfiniteFire:
+                    _spInfiniteFireTimer = _spInfiniteFireDuration;
+                    break;
+            }
+            remove = true;
+        }
+        // Offscreen
+        if (pu.x + pu.radius < -20.f) remove = true;
+        if (remove) _spPowerups.erase(_spPowerups.begin() + (long)i);
+        else ++i;
+    }
+}
+
+void Screens::spDrawPowerups() {
+    for (auto& pu : _spPowerups) {
+        Color fill;
+        Color line;
+        if (pu.type == SpPowerupType::Invincibility) {
+            // blue circle for invincibility
+            fill = (Color){80, 170, 255, 220};
+            line = (Color){120, 200, 255, 255};
+        } else if (pu.type == SpPowerupType::ClearBoard) {
+            // purple circle for clear board
+            fill = (Color){170, 80, 200, 230};
+            line = (Color){210, 120, 240, 255};
+        } else if (pu.type == SpPowerupType::InfiniteFire) {
+            // yellow sphere for infinite fire
+            fill = (Color){240, 220, 80, 230};
+            line = (Color){255, 240, 120, 255};
+        } else {
+            // green circle for extra life
+            fill = (Color){100, 220, 120, 255};
+            line = (Color){60, 160, 80, 255};
+        }
+        DrawCircle((int)pu.x, (int)pu.y, pu.radius, fill);
+        DrawCircleLines((int)pu.x, (int)pu.y, pu.radius, line);
+    }
 }
 
 // --- Formation spawners ---
