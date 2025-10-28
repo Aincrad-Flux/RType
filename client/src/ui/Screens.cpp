@@ -385,38 +385,15 @@ void Screens::teardownNet() {
 
 void Screens::sendInput(std::uint8_t bits) {
     if (!g.sock) return;
-
-    // --- Build the new ClientPackage correctly aligned ---
-    rtype::net::ClientPackage pkg{};
-    pkg.sequence    = ++_sequenceCounter;      // Each input tick increases sequence
-    pkg.inputBits   = bits;                    // All movement/shoot bits
-    pkg.actionFlags = 0;                       // Reserved for now
-    pkg.chargeLevel = 0.f;
-    pkg.pingTime    = 0;
-
-    // Handle charging info (optional visual feedback / weapon)
-    if (_isCharging) {
-        double now = GetTime();
-        pkg.chargeLevel = static_cast<float>(std::min(2.0, now - _chargeStart));
-    }
-
-    // --- Build packet header ---
     rtype::net::Header hdr{};
     hdr.version = rtype::net::ProtocolVersion;
-    hdr.type    = rtype::net::MsgType::Input;
-    hdr.size    = static_cast<std::uint16_t>(sizeof(pkg));
-
-    // --- Serialize header + package into one buffer ---
-    std::array<char, sizeof(hdr) + sizeof(pkg)> buf{};
+    hdr.type = rtype::net::MsgType::Input;
+    rtype::net::InputPacket ip{}; ip.sequence = 0; ip.bits = bits;
+    hdr.size = sizeof(ip);
+    std::array<char, sizeof(hdr) + sizeof(ip)> buf{};
     std::memcpy(buf.data(), &hdr, sizeof(hdr));
-    std::memcpy(buf.data() + sizeof(hdr), &pkg, sizeof(pkg));
-
-    // --- Send to server ---
-    asio::error_code ec;
-    g.sock->send_to(asio::buffer(buf), g.server, 0, ec);
-    if (ec) {
-        logMessage(std::string("Send error: ") + ec.message(), "ERROR");
-    }
+    std::memcpy(buf.data() + sizeof(hdr), &ip, sizeof(ip));
+    g.sock->send_to(asio::buffer(buf), g.server);
 }
 
 void Screens::pumpNetworkOnce() {

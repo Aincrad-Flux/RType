@@ -77,15 +77,15 @@ void UdpServer::handlePacket(const asio::ip::udp::endpoint& from, const char* da
 
             endpointToPlayerId_[key] = e;
             playerInputBits_[e] = 0;
+            // Default lives
             playerLives_[e] = 4;
             playerScores_[e] = 0;
-
-            // Username still accepted over UDP Hello (compatible with your client)
+            // Parse optional username in payload
             std::string uname;
             if (payloadSize > 0) {
                 uname.assign(payload, payload + std::min<std::size_t>(payloadSize, 15));
-                while (!uname.empty() && (uname.back() == '\0' || uname.back() == ' '))
-                    uname.pop_back();
+                // strip trailing nulls/spaces
+                while (!uname.empty() && (uname.back() == '\0' || uname.back() == ' ')) uname.pop_back();
             }
             if (uname.empty()) uname = "Player" + std::to_string(e);
             playerNames_[e] = uname;
@@ -99,28 +99,24 @@ void UdpServer::handlePacket(const asio::ip::udp::endpoint& from, const char* da
 
         rtype::net::Header ack{0, rtype::net::MsgType::HelloAck, rtype::net::ProtocolVersion};
         doSend(from, &ack, sizeof(ack));
-        broadcastState();
-        lastStateSend_ = std::chrono::steady_clock::now();
         return;
     }
 
     if (header->type == rtype::net::MsgType::Input) {
-        if (payloadSize >= sizeof(rtype::net::ClientPackage)) {
-            const auto* pkg = reinterpret_cast<const rtype::net::ClientPackage*>(payload);
+        if (payloadSize >= sizeof(rtype::net::InputPacket)) {
+            auto* in = reinterpret_cast<const rtype::net::InputPacket*>(payload);
             auto it = endpointToPlayerId_.find(key);
             if (it != endpointToPlayerId_.end()) {
-                playerInputBits_[it->second] = pkg->inputBits;
+                playerInputBits_[it->second] = in->bits;
                 if (auto* pi = reg_.get<rt::game::PlayerInput>(it->second))
-                    pi->bits = pkg->inputBits;
-                if (auto* cg = reg_.get<rt::game::ChargeGun>(it->second)) {
-                    cg->charge = pkg->chargeLevel;
-                }
+                    pi->bits = in->bits;
             }
         }
         return;
     }
 
     if (header->type == rtype::net::MsgType::Disconnect) {
+        // Client explicitly disconnects
         removeClient(key);
         return;
     }
