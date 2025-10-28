@@ -111,12 +111,31 @@ void Screens::drawGameplay(ScreenState& screen) {
             if (y + pH > playableMaxY) y = (float)(playableMaxY - pH);
             if (x < 0) x = 0; if (x + pW > w) x = (float)(w - pW);
             DrawRectangle((int)x, (int)y, (int)pW, (int)pH, (Color){100, 200, 255, 255});
+
+            // Draw invincibility shield if player has it (check based on entity color alpha or a special marker)
+            // Since we can't easily track server-side invincibility on client, we'll skip the shield visual
+            // Or we could add it based on recent damage (temporary solution)
         } else if (e.type == 2) {
             // Enemy
             DrawRectangle((int)e.x, (int)e.y, 24, 16, (Color){220, 80, 80, 255});
         } else if (e.type == 3) {
             // Bullet
             DrawRectangle((int)e.x, (int)e.y, 6, 3, (Color){240, 220, 80, 255});
+        } else if (e.type == 4) {
+            // Power-up - draw as a circle with color based on rgba
+            int cx = (int)(e.x + 9.f);
+            int cy = (int)(e.y + 9.f);
+            float radius = 9.f;
+            // Extract color from rgba
+            std::uint32_t rgba = e.rgba;
+            std::uint8_t r = (rgba >> 24) & 0xFF;
+            std::uint8_t g = (rgba >> 16) & 0xFF;
+            std::uint8_t b = (rgba >> 8) & 0xFF;
+            std::uint8_t a = rgba & 0xFF;
+            Color fill = {r, g, b, a};
+            Color line = {(std::uint8_t)std::min(255, r + 40), (std::uint8_t)std::min(255, g + 40), (std::uint8_t)std::min(255, b + 40), a};
+            DrawCircle(cx, cy, radius, fill);
+            DrawCircleLines(cx, cy, radius, line);
         }
     }
 

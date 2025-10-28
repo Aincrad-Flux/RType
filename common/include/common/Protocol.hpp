@@ -55,6 +55,7 @@ enum class EntityType : std::uint8_t {
     Player = 1,
     Enemy  = 2,
     Bullet = 3,
+    Powerup = 4,
 };
 
 #pragma pack(push, 1)

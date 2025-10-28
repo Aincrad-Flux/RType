@@ -112,6 +112,9 @@ void GameSession::gameLoop() {
     reg_.addSystem(std::make_unique<rt::game::DespawnOutOfBoundsSystem>(-50.f, 1000.f, -50.f, 600.f));
     reg_.addSystem(std::make_unique<rt::game::CollisionSystem>());
     reg_.addSystem(std::make_unique<rt::game::InvincibilitySystem>());
+    reg_.addSystem(std::make_unique<rt::game::PowerupSpawnSystem>(rng_, &lastTeamScore_));
+    reg_.addSystem(std::make_unique<rt::game::PowerupCollisionSystem>());
+    reg_.addSystem(std::make_unique<rt::game::InfiniteFireSystem>());
     reg_.addSystem(std::make_unique<rt::game::FormationSpawnSystem>(rng_, &elapsed));
 
     while (running_) {
@@ -147,6 +150,19 @@ void GameSession::gameLoop() {
                         reg_.emplace<rt::game::Invincible>(e, rt::game::Invincible{1.0f});
                     }
                     hf->value = false;
+                }
+            }
+
+            // Handle life pickups
+            if (auto* lp = reg_.get<rt::game::LifePickup>(e)) {
+                if (lp->pending) {
+                    auto lives = playerLives_[e];
+                    if (lives < 10) { // Cap at 10 lives
+                        lives = static_cast<std::uint8_t>(lives + 1);
+                        playerLives_[e] = lives;
+                        broadcastLivesUpdate(e, lives);
+                    }
+                    lp->pending = false; // Mark as processed
                 }
             }
         }
@@ -246,7 +262,8 @@ void GameSession::broadcastState() {
     std::vector<rtype::net::PackedEntity> players;
     std::vector<rtype::net::PackedEntity> bullets;
     std::vector<rtype::net::PackedEntity> enemies;
-    players.reserve(16); bullets.reserve(64); enemies.reserve(64);
+    std::vector<rtype::net::PackedEntity> powerups;
+    players.reserve(16); bullets.reserve(64); enemies.reserve(64); powerups.reserve(16);
 
     auto& types = reg_.storage<rt::game::NetType>().data();
     for (auto& [e, nt] : types) {
@@ -263,20 +280,21 @@ void GameSession::broadcastState() {
         switch (nt.type) {
             case rtype::net::EntityType::Player: players.push_back(pe); break;
             case rtype::net::EntityType::Bullet: bullets.push_back(pe); break;
+            case rtype::net::EntityType::Powerup: powerups.push_back(pe); break;
             case rtype::net::EntityType::Enemy:
             default: enemies.push_back(pe); break;
         }
     }
 
     std::vector<rtype::net::PackedEntity> net;
-    net.reserve(std::min<std::size_t>(players.size() + bullets.size() + enemies.size(), maxEntities));
+    net.reserve(std::min<std::size_t>(players.size() + bullets.size() + enemies.size() + powerups.size(), maxEntities));
     auto appendLimited = [&](const std::vector<rtype::net::PackedEntity>& src) {
         for (const auto& pe : src) {
             if (net.size() >= maxEntities) break;
             net.push_back(pe);
         }
     };
-    appendLimited(players); appendLimited(bullets); appendLimited(enemies);
+    appendLimited(players); appendLimited(bullets); appendLimited(powerups); appendLimited(enemies);
 
     rtype::net::StateHeader sh{};
     sh.count = static_cast<std::uint16_t>(net.size());

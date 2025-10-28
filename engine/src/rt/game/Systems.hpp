@@ -98,6 +98,30 @@ class FormationSpawnSystem : public rt::ecs::System {
     rt::ecs::Entity spawnBigShooters(rt::ecs::Registry& r, float y, int count);
 };
 
+class PowerupSpawnSystem : public rt::ecs::System {
+  public:
+    PowerupSpawnSystem(std::mt19937& rng, std::int32_t* teamScorePtr)
+      : rng_(rng), teamScore_(teamScorePtr) {}
+    void update(rt::ecs::Registry& r, float dt) override;
+  private:
+    std::mt19937& rng_;
+    std::int32_t* teamScore_;
+    std::int32_t nextPowerupScore_ = 1500;
+    int powerupMinPts_ = 1500;
+    int powerupMaxPts_ = 2000;
+    float powerupSpeed_ = 90.f;
+};
+
+class PowerupCollisionSystem : public rt::ecs::System {
+  public:
+    void update(rt::ecs::Registry& r, float dt) override;
+};
+
+class InfiniteFireSystem : public rt::ecs::System {
+  public:
+    void update(rt::ecs::Registry& r, float dt) override;
+};
+
 class CollisionSystem : public rt::ecs::System {
   public:
     void update(rt::ecs::Registry& r, float dt) override;
