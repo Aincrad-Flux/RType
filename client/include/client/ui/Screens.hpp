@@ -155,7 +155,9 @@ private:
 
     // Boss state (spawns once when reaching a score threshold, moves in from right then holds at right side)
     bool _spBossActive = false;
-    bool _spBossSpawned = false;       // ensure single spawn per run
+    bool _spBossSpawned = false;
+    // Next score threshold at which to spawn a boss (recurs every 15000 points)
+    int _spBossThreshold = 15000;
     rt::ecs::Entity _spBossId = 0;
     float _spBossW = 160.f;            // larger boss size
     float _spBossH = 120.f;

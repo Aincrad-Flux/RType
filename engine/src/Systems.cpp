@@ -348,8 +348,20 @@ rt::ecs::Entity FormationSpawnSystem::spawnBigShooters(rt::ecs::Registry& r, flo
 }
 
 void FormationSpawnSystem::update(rt::ecs::Registry& r, float dt) {
-    // Do not spawn regular waves if a boss is active/present
-    for (auto& [e, _] : r.storage<BossTag>().data()) { (void)e; return; }
+    // Suppress regular waves while a boss is active
+    bool bossPresent = false;
+    for (auto& [e, _] : r.storage<BossTag>().data()) { (void)e; bossPresent = true; break; }
+    if (bossPresent) {
+        blockedByBoss_ = true;
+        return;
+    }
+    // If we were blocked by a boss and it just died, force immediate wave spawn
+    if (blockedByBoss_) {
+        blockedByBoss_ = false;
+        // prime timer so a wave is spawned right away this frame
+        timer_ = 3.0f;
+    }
+
     timer_ += dt;
     if (timer_ < 3.0f) return;
     timer_ = 0.f;
@@ -512,11 +524,20 @@ void InvincibilitySystem::update(rt::ecs::Registry& r, float dt) {
 
 void BossSpawnSystem::update(rt::ecs::Registry& r, float dt) {
     (void)dt;
-    for (auto& [e, _] : r.storage<BossTag>().data()) { (void)e; spawned_ = true; return; }
-    if (spawned_) return;
+    // Track whether a boss is currently present
+    bool anyBoss = false;
+    for (auto& [e, _] : r.storage<BossTag>().data()) { (void)e; anyBoss = true; break; }
+    bossActive_ = anyBoss;
+    if (anyBoss) return;
+
+    // No boss present: decide whether to spawn based on score threshold multiples
     int bestScore = 0;
     for (auto& [e, sc] : r.storage<Score>().data()) { (void)e; bestScore = std::max(bestScore, sc.value); }
-    if (bestScore < threshold_) return;
+    if (threshold_ <= 0) return;
+    int shouldHaveSpawned = bestScore / threshold_;
+    if (shouldHaveSpawned <= bossesSpawned_) return; // not yet at next multiple
+
+    // Spawn a boss
     constexpr float kWorldH = 600.f;
     constexpr float kTopMargin = 56.f;
     constexpr float kBottomMargin = 10.f;
@@ -544,7 +565,9 @@ void BossSpawnSystem::update(rt::ecs::Registry& r, float dt) {
     boss.speedX = -60.f;
     boss.speedY = 100.f;
     r.emplace<BossTag>(e, boss);
-    spawned_ = true;
+
+    bossesSpawned_ += 1;
+    bossActive_ = true;
 }
 
 void BossSystem::update(rt::ecs::Registry& r, float dt) {

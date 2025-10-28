@@ -141,6 +141,7 @@ void Screens::initSingleplayerWorld() {
     // Boss state reset
     _spBossActive = false;
     _spBossSpawned = false;
+    _spBossThreshold = 15000;
     _spBossId = 0;
     _spBossStopX = 0.f;
     _spBossAtStop = false;
@@ -199,10 +200,10 @@ void Screens::updateSingleplayerWorld(float dt) {
     // Tick infinite fire
     if (_spInfiniteFireTimer > 0.f) { _spInfiniteFireTimer -= dt; if (_spInfiniteFireTimer < 0.f) _spInfiniteFireTimer = 0.f; }
 
-    if (!_spBossSpawned && _score >= 15000) {
+    if (!_spBossActive && _score >= _spBossThreshold) {
         spSpawnBoss();
-        _spBossSpawned = true;
         _spBossActive = true;
+        _spBossSpawned = true;
     }
 
     // Overheat: if firing, drain heat; otherwise regenerate
@@ -230,7 +231,7 @@ void Screens::updateSingleplayerWorld(float dt) {
     }
 
     // Randomized spawn scheduler, with cap on active enemies
-    if (!_gameOver && !_spBossSpawned && _spSpawnTimer >= _spNextSpawnDelay && _spEnemies.size() < _spEnemyCap) {
+    if (!_gameOver && !_spBossActive && _spSpawnTimer >= _spNextSpawnDelay && _spEnemies.size() < _spEnemyCap) {
         _spSpawnTimer = 0.f;
         // choose formation cyclically to keep variety while still randomizing timing
         int k = _spNextFormation++ % 4;
@@ -370,7 +371,10 @@ void Screens::updateSingleplayerWorld(float dt) {
                         _spBossId = 0;
                         _spBossActive = false;
                         _spBossAtStop = false;
+                        _spBossSpawned = false;
                         _score += 1000;
+                        _spBossThreshold += 15000;
+                        _spSpawnTimer = _spNextSpawnDelay;
                     }
                 }
             }
