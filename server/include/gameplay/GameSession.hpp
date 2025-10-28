@@ -7,6 +7,7 @@
 #include <random>
 #include <string>
 #include <chrono>
+#include <functional>
 #include "common/Protocol.hpp"
 #include "rt/ecs/Registry.hpp"
 
@@ -14,40 +15,38 @@
 namespace rt { namespace game { class FormationSpawnSystem; } }
 
 namespace rtype::server {
-
 class TcpServer;
+}
 
-class UdpServer {
+namespace rtype::server::gameplay {
+
+class GameSession {
 public:
-    UdpServer(asio::io_context& io, unsigned short port);
-    ~UdpServer();
+    using SendFn = std::function<void(const asio::ip::udp::endpoint&, const void*, std::size_t)>;
+
+    GameSession(asio::io_context& io, SendFn sendFn, rtype::server::TcpServer* tcpServer);
+    ~GameSession();
 
     void start();
     void stop();
 
-    void setTcpServer(TcpServer* tcp) { tcp_ = tcp; }
+    // Handle UDP packet from client
+    void onUdpPacket(const asio::ip::udp::endpoint& from, const char* data, std::size_t size);
 
 private:
-    void doReceive();
-    void doSend(const asio::ip::udp::endpoint& to, const void* data, std::size_t size);
-    void handlePacket(const asio::ip::udp::endpoint& from, const char* data, std::size_t size);
-
     void gameLoop();
     void checkTimeouts();
     void removeClient(const std::string& key);
-
     void broadcastState();
     void broadcastRoster();
     void broadcastLivesUpdate(std::uint32_t id, std::uint8_t lives);
-    void broadcastLobbyStatus();
-    void broadcastGameOver(std::uint8_t reason);
+    void maybeStartGame();
 
-    void maybeStartGame(); // triggers StartGame over TCP
+    static std::string makeKey(const asio::ip::udp::endpoint& ep);
 
+private:
     asio::io_context& io_;
-    asio::ip::udp::socket socket_;
-    std::array<char, 2048> buffer_{};
-    asio::ip::udp::endpoint remote_;
+    SendFn send_;
 
     std::thread gameThread_;
     bool running_ = false;
@@ -67,17 +66,9 @@ private:
     std::mt19937 rng_;
     std::unordered_map<std::string, std::chrono::steady_clock::time_point> lastSeen_;
 
-    TcpServer* tcp_ = nullptr;
-    bool gameStarted_ = false; // also used as lobby "started" flag
-
-    // Lobby/match configuration
-    std::uint32_t hostId_ = 0;            // player id designated as host
-    std::uint8_t lobbyBaseLives_ = 4;     // default base lives for players
-    std::uint8_t lobbyDifficulty_ = 1;    // 0=Easy,1=Normal,2=Hard
-    std::uint8_t shooterPercent_ = 25;    // enemy shooters percentage per wave
-
-    // Runtime systems
-    rt::game::FormationSpawnSystem* spawnSys_ = nullptr; // not owned; owned by reg_
+    rtype::server::TcpServer* tcp_ = nullptr;
+    bool gameStarted_ = false;
 };
 
-} // namespace rtype::server
+}
+
