@@ -93,6 +93,12 @@ void Screens::drawGameplay(ScreenState& screen) {
     DrawRectangle(barX, barY, fillW, barH, fillC);
     DrawRectangleLines(barX, barY, barW, barH, (Color){220, 220, 220, 200});
 
+    // --- Team score (top-left) ---
+    int hudFontScore = hudFont;
+    int scoreMargin = margin;
+    std::string scoreText = std::string("Score: ") + std::to_string(_score);
+    DrawText(scoreText.c_str(), scoreMargin, scoreMargin, hudFontScore, RAYWHITE);
+
     // --- World rendering (rectangles like singleplayer) ---
     if (_entities.empty()) {
         titleCentered("Connecting to game...", (int)(GetScreenHeight()*0.5f), 24, RAYWHITE);
