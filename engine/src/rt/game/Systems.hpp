@@ -80,4 +80,20 @@ class CollisionSystem : public rt::ecs::System {
     void update(rt::ecs::Registry& r, float dt) override;
 };
 
+// Spawns the boss once any player's score reaches a threshold; prevents other spawns while active
+class BossSpawnSystem : public rt::ecs::System {
+  public:
+    explicit BossSpawnSystem(int threshold = 15000) : threshold_(threshold) {}
+    void update(rt::ecs::Registry& r, float dt) override;
+  private:
+    int threshold_ = 15000;
+    bool spawned_ = false;
+};
+
+// Controls the boss movement (slide in from right, then bounce vertically) and clamps it in world
+class BossSystem : public rt::ecs::System {
+  public:
+    void update(rt::ecs::Registry& r, float dt) override;
+};
+
 }

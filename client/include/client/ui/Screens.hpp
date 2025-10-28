@@ -89,6 +89,8 @@ private:
     void spSpawnTriangle(int rows, float y, float spacing);
     void spSpawnDiamond(int rows, float y, float spacing);
     void spScheduleNextSpawn();
+    // Boss helper
+    void spSpawnBoss();
     bool _singleplayerActive = false;
     bool _spPaused = false;
     std::unique_ptr<rt::ecs::Registry> _spWorld;
@@ -150,6 +152,22 @@ private:
     float _spInfiniteFireDuration = 10.0f; // seconds of infinite fire on pickup
     // We keep systems owned by the world; stored here for clarity
     bool _spInitialized = false;
+
+    // Boss state (spawns once when reaching a score threshold, moves in from right then holds at right side)
+    bool _spBossActive = false;
+    bool _spBossSpawned = false;       // ensure single spawn per run
+    rt::ecs::Entity _spBossId = 0;
+    float _spBossW = 160.f;            // larger boss size
+    float _spBossH = 120.f;
+    float _spBossStopX = 0.f;          // x at which boss stops moving left
+    float _spBossRightMargin = 20.f;   // margin from right edge when stopped
+    // Boss combat state
+    int _spBossHpMax = 50;
+    int _spBossHp = 0;
+    // Boss vertical movement state
+    bool _spBossAtStop = false;        // has reached its stop X position
+    bool _spBossDirDown = true;        // vertical patrol direction
+    float _spBossSpeedY = 100.f;       // effective speed is governed by Ai bits; value used for tuning if needed
 
     // Check if required sprite assets are available on disk
     bool assetsAvailable() const;

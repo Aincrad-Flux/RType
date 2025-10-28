@@ -138,12 +138,28 @@ void Screens::initSingleplayerWorld() {
     // Reset power-up states
     _spInvincibleTimer = 0.f;
     _spInfiniteFireTimer = 0.f;
+    // Boss state reset
+    _spBossActive = false;
+    _spBossSpawned = false;
+    _spBossId = 0;
+    _spBossStopX = 0.f;
+    _spBossAtStop = false;
+    _spBossDirDown = true;
+    _spBossHp = 0;
     // Schedule first spawn with random delay
     spScheduleNextSpawn();
     _spInitialized = true;
 }
 
 void Screens::shutdownSingleplayerWorld() {
+    // Destroy boss entity if present
+    if (_spWorld && _spBossId != 0) {
+        _spWorld->destroy(_spBossId);
+    }
+    _spBossActive = false;
+    _spBossSpawned = false;
+    _spBossId = 0;
+
     _spWorld.reset();
     _spPlayer = 0;
     _spEnemies.clear();
@@ -184,6 +200,13 @@ void Screens::updateSingleplayerWorld(float dt) {
     // Tick infinite fire
     if (_spInfiniteFireTimer > 0.f) { _spInfiniteFireTimer -= dt; if (_spInfiniteFireTimer < 0.f) _spInfiniteFireTimer = 0.f; }
 
+    // Spawn boss when reaching 15000 points (once per run)
+    if (!_spBossSpawned && _score >= 15000) {
+        spSpawnBoss();
+        _spBossSpawned = true;
+        _spBossActive = true;
+    }
+
     // Overheat: if firing, drain heat; otherwise regenerate
     bool shootHeld = !_gameOver && IsKeyDown(KEY_SPACE);
     if (_spInfiniteFireTimer > 0.f) {
@@ -209,7 +232,7 @@ void Screens::updateSingleplayerWorld(float dt) {
     }
 
     // Randomized spawn scheduler, with cap on active enemies
-    if (!_gameOver && _spSpawnTimer >= _spNextSpawnDelay && _spEnemies.size() < _spEnemyCap) {
+    if (!_gameOver && !_spBossSpawned && _spSpawnTimer >= _spNextSpawnDelay && _spEnemies.size() < _spEnemyCap) {
         _spSpawnTimer = 0.f;
         // choose formation cyclically to keep variety while still randomizing timing
         int k = _spNextFormation++ % 4;
@@ -266,6 +289,48 @@ void Screens::updateSingleplayerWorld(float dt) {
         else { ++it; }
     }
 
+    // Update boss AI: slide in from right until stop position, then patrol vertically between top/bottom bounds
+    if (_spBossActive && _spBossId != 0) {
+        auto* pos = _spWorld->get<rt::components::Position>(_spBossId);
+        auto* ai = _spWorld->get<rt::components::AiController>(_spBossId);
+        if (!pos || !ai) {
+            _spBossActive = false;
+            _spBossId = 0;
+        } else {
+            std::uint8_t b = 0;
+            if (!_gameOver) {
+                int screenW = GetScreenWidth();
+                int screenH = GetScreenHeight();
+                float minY = 0.f;
+                float maxY = screenH - _spBossH;
+                if (minY > maxY) maxY = minY;
+                // compute or update stop X
+                _spBossStopX = (float)screenW - _spBossRightMargin - _spBossW;
+                if (!_spBossAtStop) {
+                    if (pos->x > _spBossStopX) {
+                        b |= kLeft;
+                    } else {
+                        _spBossAtStop = true;
+                        // clamp Y inside bounds on first stop
+                        if (pos->y < minY) pos->y = minY;
+                        if (pos->y > maxY) pos->y = maxY;
+                    }
+                }
+                if (_spBossAtStop) {
+                    // bounce between minY and maxY
+                    if (_spBossDirDown) {
+                        b |= kDown;
+                        if (pos->y >= maxY) _spBossDirDown = false;
+                    } else {
+                        b |= kUp;
+                        if (pos->y <= minY) _spBossDirDown = true;
+                    }
+                }
+            }
+            ai->bits = b;
+        }
+    }
+
     // Update bullets and handle collisions
     const int screenW = GetScreenWidth();
     if (!_gameOver)
@@ -293,6 +358,31 @@ void Screens::updateSingleplayerWorld(float dt) {
                     // Spawn power-ups for any crossed thresholds
                     spHandleScoreThresholdSpawns(screenW);
                     destroyBullet = true;
+                }
+            }
+        }
+        // Collide with boss if active
+        if (!destroyBullet && _spBossActive && _spBossId != 0) {
+            if (auto* bp = _spWorld->get<rt::components::Position>(_spBossId)) {
+                float ex = bp->x, ey = bp->y, ew = _spBossW, eh = _spBossH;
+                float bx1 = b.x, by1 = b.y, bx2 = b.x + b.w, by2 = b.y + b.h;
+                float ex2 = ex + ew, ey2 = ey + eh;
+                bool hit = !(bx2 < ex || ex2 < bx1 || by2 < ey || ey2 < by1);
+                if (hit) {
+                    // 1 hit = -1 HP; requires 50 hits total
+                    if (_spBossHp > 0) _spBossHp -= 1;
+                    // Optional: prevent HP from underflowing
+                    if (_spBossHp < 0) _spBossHp = 0;
+                    destroyBullet = true;
+                    // If boss died, destroy entity and end boss phase
+                    if (_spBossHp == 0) {
+                        _spWorld->destroy(_spBossId);
+                        _spBossId = 0;
+                        _spBossActive = false;
+                        _spBossAtStop = false;
+                        // small score reward for kill (optional)
+                        _score += 1000;
+                    }
                 }
             }
         }
@@ -345,6 +435,15 @@ void Screens::drawSingleplayerWorld() {
             DrawRectangleRec(rect, (Color){220, 80, 80, 255});
         }
     }
+    // draw boss if active
+    if (_spBossActive && _spBossId != 0) {
+        if (auto* bp = _spWorld->get<rt::components::Position>(_spBossId)) {
+            Rectangle rect{bp->x, bp->y, _spBossW, _spBossH};
+            // Big purple boss
+            DrawRectangleRec(rect, (Color){150, 60, 180, 255});
+            DrawRectangleLines((int)rect.x, (int)rect.y, (int)rect.width, (int)rect.height, (Color){220, 200, 240, 255});
+        }
+    }
     // draw bullets as yellow rectangles
     for (auto& b : _spBullets) {
         Rectangle rect{b.x, b.y, b.w, b.h};
@@ -387,6 +486,30 @@ void Screens::drawSingleplayerWorld() {
     int font = baseFontFromHeight(h);
     std::string scoreText = std::string("Score: ") + std::to_string(_score);
     DrawText(scoreText.c_str(), margin, margin, font, RAYWHITE);
+
+    // Boss HP bar at top-center if active
+    if (_spBossActive && _spBossHpMax > 0) {
+        float ratio = (float)_spBossHp / (float)_spBossHpMax;
+        if (ratio < 0.f) ratio = 0.f; if (ratio > 1.f) ratio = 1.f;
+        int barW = (int)(w * 0.36f);
+        int barH2 = (int)(h * 0.03f);
+        int barX = (w - barW) / 2;
+        int barY = margin + font + 6; // below score line
+        // label above the bar
+        const char* label = "BOSS";
+        int tw = MeasureText(label, font);
+        int labelX = barX + (barW - tw) / 2;
+        int labelY = barY - font - 4;
+        if (labelY < 0) labelY = 0;
+        DrawText(label, labelX, labelY, font, RAYWHITE);
+        // backdrop
+        DrawRectangle(barX, barY, barW, barH2, (Color){30, 30, 30, 200});
+        // fill (red -> darker as low)
+        Color hpC = (Color){220, 70, 70, 230};
+        DrawRectangle(barX, barY, (int)(barW * ratio), barH2, hpC);
+        // outline
+        DrawRectangleLines(barX, barY, barW, barH2, (Color){220, 220, 220, 220});
+    }
 }
 
 // --- Power-ups helpers ---
@@ -586,6 +709,31 @@ void Screens::spSpawnDiamond(int rows, float y, float spacing) {
             _spEnemies.push_back({e, SpFormationKind::Diamond, idx++, y, spacing, 0.f, 0.f, _spElapsed, localX, localY});
         }
     }
+}
+
+// Boss spawner: create a large enemy that slides in from the right and stops near right edge
+void Screens::spSpawnBoss() {
+    if (!_spWorld) return;
+    int screenW = GetScreenWidth();
+    int screenH = GetScreenHeight();
+    float spawnX = (float)screenW + 40.f; // off-screen to the right
+    float minY = 0.f;
+    float maxY = screenH - _spBossH;
+    if (maxY < minY) maxY = minY;
+    float y = 0.5f * (minY + maxY);
+
+    auto e = _spWorld->create();
+    _spWorld->emplace<rt::components::Position>((rt::ecs::Entity)e, rt::components::Position{spawnX, y});
+    _spWorld->emplace<rt::components::Enemy>((rt::ecs::Entity)e, rt::components::Enemy{});
+    _spWorld->emplace<rt::components::AiController>((rt::ecs::Entity)e, rt::components::AiController{});
+    _spWorld->emplace<rt::components::Size>((rt::ecs::Entity)e, rt::components::Size{_spBossW, _spBossH});
+
+    _spBossId = e;
+    _spBossActive = true;
+    _spBossAtStop = false;
+    _spBossDirDown = true;
+    _spBossHp = _spBossHpMax;
+    _spBossStopX = (float)screenW - _spBossRightMargin - _spBossW;
 }
 
 } } // namespace client::ui

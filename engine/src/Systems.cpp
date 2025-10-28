@@ -348,6 +348,8 @@ rt::ecs::Entity FormationSpawnSystem::spawnBigShooters(rt::ecs::Registry& r, flo
 }
 
 void FormationSpawnSystem::update(rt::ecs::Registry& r, float dt) {
+    // Do not spawn regular waves if a boss is active/present
+    for (auto& [e, _] : r.storage<BossTag>().data()) { (void)e; return; }
     timer_ += dt;
     if (timer_ < 3.0f) return;
     timer_ = 0.f;
@@ -447,18 +449,32 @@ void CollisionSystem::update(rt::ecs::Registry& r, float dt) {
         if (bt->faction == BulletFaction::Player) {
             // hit enemies
             for (auto& [e, _] : r.storage<EnemyTag>().data()) {
-                if (intersects(b, e)) {
-                    // award score to bullet owner if any
-                    if (auto* bo = r.get<BulletOwner>(b)) {
-                        if (auto* sc = r.get<Score>(bo->owner)) {
-                            sc->value += 50;
-                        }
-                    }
-                    // Beams persist through multiple hits in the same frame; regular bullets are destroyed on first hit
+                if (!intersects(b, e)) continue;
+                // If this enemy is a boss, decrement HP instead of immediate death
+                if (auto* boss = r.get<BossTag>(e)) {
+                    // apply damage
+                    if (boss->hp > 0) boss->hp -= 1;
+                    // Destroy bullet unless it's a beam
                     if (!isBeam) toDestroy.push_back(b);
-                    toDestroy.push_back(e);
-                    if (!isBeam) break; // stop after first hit for regular bullets
+                    // If dead now, destroy boss and award big score
+                    if (boss->hp <= 0) {
+                        // award score to bullet owner if any
+                        if (auto* bo = r.get<BulletOwner>(b)) if (auto* sc = r.get<Score>(bo->owner)) sc->value += 1000;
+                        toDestroy.push_back(e);
+                    }
+                    // For bosses, do not process further targets for this bullet if it's not a beam
+                    if (!isBeam) break;
+                    else continue;
                 }
+                // Normal enemy: award score and destroy
+                if (auto* bo = r.get<BulletOwner>(b)) {
+                    if (auto* sc = r.get<Score>(bo->owner)) {
+                        sc->value += 50;
+                    }
+                }
+                if (!isBeam) toDestroy.push_back(b);
+                toDestroy.push_back(e);
+                if (!isBeam) break; // stop after first hit for regular bullets
             }
         } else {
             // enemy bullets hit players
@@ -497,6 +513,94 @@ void InvincibilitySystem::update(rt::ecs::Registry& r, float dt) {
         inv.timeLeft -= dt;
         if (inv.timeLeft <= 0.f) {
             inv.timeLeft = 0.f;
+        }
+    }
+}
+
+// Spawn the boss when any player's score reaches threshold. Only one boss per run.
+void BossSpawnSystem::update(rt::ecs::Registry& r, float dt) {
+    (void)dt;
+    // If a boss already exists, nothing to do
+    for (auto& [e, _] : r.storage<BossTag>().data()) { (void)e; spawned_ = true; return; }
+    if (spawned_) return;
+    // Check any player's score
+    int bestScore = 0;
+    for (auto& [e, sc] : r.storage<Score>().data()) { (void)e; bestScore = std::max(bestScore, sc.value); }
+    if (bestScore < threshold_) return;
+    // Spawn boss entity
+    // World/margins consistent with formation logic
+    constexpr float kWorldH = 600.f;
+    constexpr float kTopMargin = 56.f;
+    constexpr float kBottomMargin = 10.f;
+    // Boss size (bigger than enemies)
+    float bw = 160.f;
+    float bh = 120.f;
+    float yMin = kTopMargin;
+    float yMax = kWorldH - kBottomMargin - bh;
+    if (yMax < yMin) yMax = yMin;
+    float by = 0.5f * (yMin + yMax);
+    // Spawn slightly offscreen to the right
+    auto e = r.create();
+    r.emplace<Transform>(e, Transform{980.f + 60.f, by});
+    r.emplace<Velocity>(e, Velocity{-60.f, 0.f});
+    r.emplace<Size>(e, Size{bw, bh});
+    r.emplace<ColorRGBA>(e, ColorRGBA{0x9646B4FFu}); // purple
+    r.emplace<NetType>(e, NetType{static_cast<rtype::net::EntityType>(2)}); // treat as Enemy for net
+    r.emplace<EnemyTag>(e, EnemyTag{});
+    BossTag boss{};
+    boss.maxHp = 50;
+    boss.hp = boss.maxHp;
+    boss.rightMargin = 20.f;
+    // Assume server world width ~ 960; stop so boss fully visible
+    float worldW = 960.f;
+    boss.stopX = worldW - boss.rightMargin - bw;
+    boss.atStop = false;
+    boss.dirDown = true;
+    boss.speedX = -60.f;
+    boss.speedY = 100.f;
+    r.emplace<BossTag>(e, boss);
+    spawned_ = true;
+}
+
+// Control boss movement: slide to stopX, then bounce vertically within world bounds
+void BossSystem::update(rt::ecs::Registry& r, float dt) {
+    constexpr float kWorldH = 600.f;
+    constexpr float kTopMargin = 56.f;
+    constexpr float kBottomMargin = 10.f;
+    for (auto& [e, boss] : r.storage<BossTag>().data()) {
+        auto* t = r.get<Transform>(e);
+        auto* v = r.get<Velocity>(e);
+        auto* s = r.get<Size>(e);
+        if (!t || !s) continue;
+        if (!v) { r.emplace<Velocity>(e, Velocity{0.f, 0.f}); v = r.get<Velocity>(e); }
+        float minY = kTopMargin;
+        float maxY = kWorldH - kBottomMargin - s->h;
+        if (!boss.atStop) {
+            // Move left towards stopX
+            if (t->x > boss.stopX) {
+                v->vx = boss.speedX;
+            } else {
+                t->x = boss.stopX;
+                v->vx = 0.f;
+                boss.atStop = true;
+            }
+            // While approaching, keep inside vertical bounds
+            if (t->y < minY) t->y = minY;
+            if (t->y > maxY) t->y = maxY;
+            v->vy = 0.f;
+        } else {
+            // Vertical patrol
+            v->vx = 0.f;
+            if (boss.dirDown) {
+                v->vy = std::abs(boss.speedY);
+                if (t->y >= maxY) boss.dirDown = false;
+            } else {
+                v->vy = -std::abs(boss.speedY);
+                if (t->y <= minY) boss.dirDown = true;
+            }
+            // Clamp to ensure we don't overshoot bounds
+            if (t->y < minY) t->y = minY;
+            if (t->y > maxY) t->y = maxY;
         }
     }
 }
