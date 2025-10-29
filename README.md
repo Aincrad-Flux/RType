@@ -87,6 +87,27 @@ Client:
 - `client/` – raylib client and UI
 - `docs/`, `Gitbook/` – architecture, protocol, and developer docs
 
+## Documentation
+
+- Getting started: [docs/setup.md](docs/setup.md)
+- Usage guide: [docs/usage.md](docs/usage.md)
+- Troubleshooting: [docs/troubleshooting.md](docs/troubleshooting.md)
+- Architecture overview: [docs/architecture.md](docs/architecture.md)
+- Network protocol: [docs/protocol.md](docs/protocol.md)
+- API notes: [docs/api.md](docs/api.md)
+- Changelog: [docs/changelog.md](docs/changelog.md)
+- Contribution guide: [docs/pull_request.md](docs/pull_request.md)
+
+Developer details:
+- Overview: [docs/devlopper/README.md](docs/devlopper/README.md)
+- Engine internals: [docs/devlopper/engine.md](docs/devlopper/engine.md)
+- ECS graph: [docs/devlopper/ecs_graph.md](docs/devlopper/ecs_graph.md)
+- Client internals: [docs/devlopper/client.md](docs/devlopper/client.md)
+- Server internals: [docs/devlopper/server.md](docs/devlopper/server.md)
+- Protocol notes: [docs/devlopper/protocol.md](docs/devlopper/protocol.md)
+
+There is also an extended, navigable version under `Gitbook/` if you prefer browsing by topics.
+
 ## Troubleshooting
 - Permission denied under `build/build/Release/generators`: you likely ran a previous configure with sudo.
 	```bash
