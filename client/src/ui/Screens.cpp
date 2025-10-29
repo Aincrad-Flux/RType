@@ -237,26 +237,18 @@ bool Screens::autoConnect(ScreenState& screen, MultiplayerForm& form) {
         _playerLives = 4;
         _gameOver = false;
         _otherPlayers.clear();
+        // TCP handshake to get UDP port
+        disconnectTcp();
+        if (!connectTcp()) {
+            _statusMessage = std::string("TCP connection failed.");
+            disconnectTcp();
+            return false;
+        }
+        // Setup UDP connection
         teardownNet();
         ensureNetSetup();
-        double start = GetTime();
-        bool ok = false;
-        while (GetTime() - start < 1.0) {
-            asio::ip::udp::endpoint from;
-            std::array<char, 1024> in{};
-            asio::error_code ec;
-            std::size_t n = g.sock->receive_from(asio::buffer(in), from, 0, ec);
-            if (!ec && n >= sizeof(rtype::net::Header)) {
-                auto* rh = reinterpret_cast<rtype::net::Header*>(in.data());
-                if (rh->version == rtype::net::ProtocolVersion) {
-                    if (rh->type == rtype::net::MsgType::HelloAck) { ok = true; break; }
-                    handleNetPacket(in.data(), n);
-                }
-            } else if (ec && ec != asio::error::would_block) {
-                logMessage(std::string("Receive error: ") + ec.message(), "ERROR");
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(5));
-        }
+        // Wait for roster/state packets
+        bool ok = waitHelloAck(1.0);
         if (ok) {
             _statusMessage = std::string("Player Connected.");
             _connected = true;
@@ -265,12 +257,14 @@ bool Screens::autoConnect(ScreenState& screen, MultiplayerForm& form) {
         } else {
             _statusMessage = std::string("Connection failed.");
             teardownNet();
+            disconnectTcp();
             return false;
         }
     } catch (const std::exception& e) {
         logMessage(std::string("Exception: ") + e.what(), "ERROR");
         _statusMessage = std::string("Error: ") + e.what();
         teardownNet();
+        disconnectTcp();
         return false;
     }
 }

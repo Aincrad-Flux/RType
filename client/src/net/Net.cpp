@@ -23,7 +23,9 @@ bool Screens::connectTcp() {
         _tcpSocket = std::make_unique<asio::ip::tcp::socket>(*_tcpIo);
 
         asio::ip::tcp::resolver resolver(*_tcpIo);
-        auto results = resolver.resolve(asio::ip::tcp::v4(), _serverAddr, _serverPort);
+        // TCP port is UDP port + 1
+        std::string tcpPort = std::to_string(std::stoi(_serverPort) + 1);
+        auto results = resolver.resolve(asio::ip::tcp::v4(), _serverAddr, tcpPort);
 
         asio::connect(*_tcpSocket, results);
 
@@ -226,8 +228,17 @@ bool Screens::autoConnect(ScreenState& screen, MultiplayerForm& form) {
         _playerLives = 4;
         _gameOver = false;
         _otherPlayers.clear();
+        // TCP handshake to get UDP port
+        disconnectTcp();
+        if (!connectTcp()) {
+            _statusMessage = std::string("TCP connection failed.");
+            disconnectTcp();
+            return false;
+        }
+        // Setup UDP connection
         teardownNet();
         ensureNetSetup();
+        // Wait for roster/state packets
         bool ok = waitHelloAck(1.0);
         if (ok) {
             _statusMessage = std::string("Player Connected.");
@@ -237,12 +248,14 @@ bool Screens::autoConnect(ScreenState& screen, MultiplayerForm& form) {
         } else {
             _statusMessage = std::string("Connection failed.");
             teardownNet();
+            disconnectTcp();
             return false;
         }
     } catch (const std::exception& e) {
         logMessage(std::string("Exception: ") + e.what(), "ERROR");
         _statusMessage = std::string("Error: ") + e.what();
         teardownNet();
+        disconnectTcp();
         return false;
     }
 }
