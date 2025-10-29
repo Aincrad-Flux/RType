@@ -47,6 +47,12 @@ void GameSession::onTcpHello(const std::string& username, const std::string& ip)
     playerScores_[e] = 0;
     playerNames_[e] = username.empty() ? (std::string("Player") + std::to_string(e)) : username;
 
+    // If no host yet, assign this player as host
+    if (hostId_ == 0) {
+        hostId_ = e;
+        std::cout << "[server] First player assigned as host: id=" << e << " name='" << playerNames_[e] << "'\n";
+    }
+
     // store until UDP endpoint binds
     pendingByIp_[ip] = e;
 }
@@ -57,7 +63,8 @@ void GameSession::bindUdpEndpoint(const asio::ip::udp::endpoint& ep, std::uint32
     keyToEndpoint_[key] = ep;
     lastSeen_[key] = std::chrono::steady_clock::now();
     broadcastRoster();
-    maybeStartGame();
+    broadcastLobbyStatus();
+    std::cout << "[server] Player UDP bound: id=" << playerId << " from " << ep.address().to_string() << ":" << ep.port() << std::endl;
 }
 
 void GameSession::onUdpPacket(const asio::ip::udp::endpoint& from, const char* data, std::size_t size) {
