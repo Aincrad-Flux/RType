@@ -7,6 +7,7 @@
 #include <raylib.h>
 #include <utility>
 #include <random>
+#include <asio.hpp>
 
 // ECS Engine (standalone) headers for local singleplayer test
 #include "rt/ecs/Registry.hpp"
@@ -162,13 +163,19 @@ private:
     std::string _username;
     std::string _serverAddr;
     std::string _serverPort;
-    // lightweight UDP client
+    // TCP connection (handshake)
+    std::unique_ptr<asio::io_context> _tcpIo;
+    std::unique_ptr<asio::ip::tcp::socket> _tcpSocket;
+    std::uint16_t _udpPort = 0;  // received HelloAck
+    // TCP handshake methods
+    bool connectTcp();
+    void disconnectTcp();
+    // UDP client method for gameplay
     void ensureNetSetup();
     void teardownNet();
     void sendDisconnect();
     void sendInput(std::uint8_t bits);
     void pumpNetworkOnce();
-    // Block for a short time waiting for HelloAck on current UDP socket; also feeds other packets
     bool waitHelloAck(double timeoutSec);
     struct PackedEntity { unsigned id; unsigned char type; float x; float y; float vx; float vy; unsigned rgba; };
     std::vector<PackedEntity> _entities;

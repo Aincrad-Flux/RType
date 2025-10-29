@@ -25,10 +25,7 @@ void Screens::drawWaiting(ScreenState& screen) {
         return;
     }
 
-    int playerCount = 0;
-    for (const auto& e : _entities) {
-        if (e.type == 1) ++playerCount;
-    }
+    int playerCount = 1 + static_cast<int>(_otherPlayers.size());
 
     titleCentered("Waiting for players...", (int)(h * 0.25f), (int)(h * 0.08f), RAYWHITE);
     std::string sub = "Players connected: " + std::to_string(playerCount) + "/2";
