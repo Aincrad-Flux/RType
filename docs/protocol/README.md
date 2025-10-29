@@ -41,10 +41,6 @@ Each message type has its own detailed specification file:
 - **[udp-05-spawn.md](udp-05-spawn.md)** - `Spawn` - Entity spawn events (reserved)
 - **[udp-06-despawn.md](udp-06-despawn.md)** - `Despawn` - Entity removal events (reserved)
 
-##### Network Health (7-8)
-- **[udp-07-ping.md](udp-07-ping.md)** - `Ping` - Latency measurement (reserved)
-- **[udp-08-pong.md](udp-08-pong.md)** - `Pong` - Ping response (reserved)
-
 ##### Player Management (9-12)
 - **[udp-09-roster.md](udp-09-roster.md)** - `Roster` - Player list with names and lives
 - **[udp-10-lives-update.md](udp-10-lives-update.md)** - `LivesUpdate` - Player lives changed
@@ -66,8 +62,6 @@ Each message type has its own detailed specification file:
 | `State` | 4 | Server → Client | UDP | Active |
 | `Spawn` | 5 | Server → Client | UDP | Reserved |
 | `Despawn` | 6 | Server → Client | UDP | Reserved |
-| `Ping` | 7 | Bidirectional | UDP | Reserved |
-| `Pong` | 8 | Bidirectional | UDP | Reserved |
 | `Roster` | 9 | Server → Client | UDP | Active |
 | `LivesUpdate` | 10 | Server → Client | UDP | Active |
 | `ScoreUpdate` | 11 | Server → Client | UDP | Active |
@@ -136,7 +130,6 @@ When implementing a client, ensure you:
 The protocol includes reserved message types for future features:
 
 - **Spawn/Despawn:** Delta-based entity updates (more efficient than full state)
-- **Ping/Pong:** RTT measurement and keep-alive mechanism
 - **Input Sequence:** Currently sent but not used for input validation
 
 ## Version History

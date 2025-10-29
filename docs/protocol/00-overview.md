@@ -105,7 +105,7 @@ Version checking:
 
 ### 5. Ungraceful Disconnect
 
-- Server may use timeout mechanism (if `Ping/Pong` implemented)
+- Server may use timeout mechanism (track last activity time)
 - Currently: players who stop sending input remain in game until server restart
 
 ## Performance Characteristics
@@ -254,8 +254,6 @@ The protocol defines several reserved message types for future implementation:
 
 - `Spawn` (5): Delta updates for entity creation
 - `Despawn` (6): Delta updates for entity removal
-- `Ping` (7): Latency measurement request
-- `Pong` (8): Latency measurement response
 
 **Benefits of Delta Updates:**
 - Reduced bandwidth when only few entities change

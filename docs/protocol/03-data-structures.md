@@ -64,8 +64,6 @@ enum class MsgType : std::uint8_t {
     State = 4,
     Spawn = 5,
     Despawn = 6,
-    Ping = 7,
-    Pong = 8,
     Roster = 9,
     LivesUpdate = 10,
     ScoreUpdate = 11,
