@@ -42,6 +42,7 @@ private:
     void broadcastLivesUpdate(std::uint32_t id, std::uint8_t lives);
     void broadcastLobbyStatus();
     void maybeStartGame();
+    void cleanupGameWorld();
 
     static std::string makeKey(const asio::ip::udp::endpoint& ep);
 
