@@ -40,6 +40,7 @@ private:
     void broadcastState();
     void broadcastRoster();
     void broadcastLivesUpdate(std::uint32_t id, std::uint8_t lives);
+    void broadcastLobbyStatus();
     void maybeStartGame();
 
     static std::string makeKey(const asio::ip::udp::endpoint& ep);
@@ -68,6 +69,11 @@ private:
 
     rtype::server::TcpServer* tcp_ = nullptr;
     bool gameStarted_ = false;
+
+    // Lobby state
+    std::uint32_t hostId_ = 0;
+    std::uint8_t lobbyBaseLives_ = 4;
+    std::uint8_t lobbyDifficulty_ = 1;
 };
 
 }
