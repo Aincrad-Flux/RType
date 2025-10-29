@@ -119,45 +119,45 @@ void GameSession::onUdpPacket(const asio::ip::udp::endpoint& from, const char* d
                 // Reset lives to lobby setting
                 lives = lobbyBaseLives_;
                 playerScores_[pid] = 0;
-                
+
                 // Reset player position
                 if (auto* t = reg_.get<rt::game::Transform>(pid)) {
                     t->x = 50.f;
                     t->y = 100.f + static_cast<float>(playerIndex) * 40.f;
                 }
-                
+
                 // Reset velocity
                 if (auto* v = reg_.get<rt::game::Velocity>(pid)) {
                     v->vx = 0.f;
                     v->vy = 0.f;
                 }
-                
+
                 // Reset score component
                 if (auto* sc = reg_.get<rt::game::Score>(pid)) {
                     sc->value = 0;
                 }
-                
+
                 // Give 30 seconds of invincibility at start
                 if (auto* inv = reg_.get<rt::game::Invincible>(pid)) {
                     inv->timeLeft = 30.0f;
                 } else {
                     reg_.emplace<rt::game::Invincible>(pid, rt::game::Invincible{30.0f});
                 }
-                
+
                 playerIndex++;
             }
-            
+
             // Reset team score
             lastTeamScore_ = 0;
-            
+
             // Make sure game world is clean before starting
             cleanupGameWorld();
-            
+
             std::cout << "[server] Game initialized for " << playerLives_.size() << " players\n";
-            
+
             broadcastRoster();
             broadcastLobbyStatus();
-            
+
             // Send initial score update
             rtype::net::Header scoreHdr{};
             scoreHdr.version = rtype::net::ProtocolVersion;
@@ -505,30 +505,30 @@ void GameSession::maybeStartGame() {
 void GameSession::cleanupGameWorld() {
     // Clean up all non-player entities (enemies, bullets, powerups, formations)
     std::vector<rt::ecs::Entity> toDestroy;
-    
+
     // Find all entities that are not players
     for (auto& [e, nt] : reg_.storage<rt::game::NetType>().data()) {
         if (nt.type != rtype::net::EntityType::Player) {
             toDestroy.push_back(e);
         }
     }
-    
+
     // Also destroy formations (they may not have NetType component)
     for (auto& [e, f] : reg_.storage<rt::game::Formation>().data()) {
         (void)f;
         toDestroy.push_back(e);
     }
-    
+
     // Destroy all collected entities
     for (auto e : toDestroy) {
         try {
             reg_.destroy(e);
         } catch (...) {}
     }
-    
+
     // Reset team score
     lastTeamScore_ = 0;
-    
+
     std::cout << "[server] Game world cleaned: " << toDestroy.size() << " entities removed\n";
 }
 
