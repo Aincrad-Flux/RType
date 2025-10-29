@@ -17,8 +17,71 @@ namespace {
     } g;
 }
 
+bool Screens::connectTcp() {
+    try {
+        _tcpIo = std::make_unique<asio::io_context>();
+        _tcpSocket = std::make_unique<asio::ip::tcp::socket>(*_tcpIo);
+
+        asio::ip::tcp::resolver resolver(*_tcpIo);
+        auto results = resolver.resolve(asio::ip::tcp::v4(), _serverAddr, _serverPort);
+
+        asio::connect(*_tcpSocket, results);
+
+        // TCP connected
+        std::array<char, sizeof(rtype::net::Header)> welcome{};
+        asio::read(*_tcpSocket, asio::buffer(welcome));
+        auto* hdr = reinterpret_cast<rtype::net::Header*>(welcome.data());
+        if (hdr->type != rtype::net::MsgType::TcpWelcome) {
+            logMessage("Expected TcpWelcome, got different message", "ERROR");
+            return false;
+        }
+
+        //Hello + username via TCP
+        rtype::net::Header hello{};
+        hello.version = rtype::net::ProtocolVersion;
+        hello.type = rtype::net::MsgType::Hello;
+        hello.size = static_cast<std::uint16_t>(_username.size());
+        std::vector<char> helloMsg(sizeof(hello) + _username.size());
+        std::memcpy(helloMsg.data(), &hello, sizeof(hello));
+        if (!_username.empty()) {
+            std::memcpy(helloMsg.data() + sizeof(hello), _username.data(), _username.size());
+        }
+        asio::write(*_tcpSocket, asio::buffer(helloMsg));
+
+        // Receive HelloAck with UDP port
+        std::array<char, sizeof(rtype::net::Header) + sizeof(rtype::net::HelloAckPayload)> ackBuf{};
+        asio::read(*_tcpSocket, asio::buffer(ackBuf));
+        auto* ackHdr = reinterpret_cast<rtype::net::Header*>(ackBuf.data());
+        if (ackHdr->type != rtype::net::MsgType::HelloAck) {
+            logMessage("Expected HelloAck, got different message", "ERROR");
+            return false;
+        }
+
+        auto* ackPayload = reinterpret_cast<rtype::net::HelloAckPayload*>(ackBuf.data() + sizeof(rtype::net::Header));
+        _udpPort = ackPayload->udpPort;
+
+        logMessage("TCP handshake complete, UDP port: " + std::to_string(_udpPort), "INFO");
+        return true;
+    } catch (const std::exception& e) {
+        logMessage(std::string("TCP connection failed: ") + e.what(), "ERROR");
+        disconnectTcp();
+        return false;
+    }
+}
+
+void Screens::disconnectTcp() {
+    if (_tcpSocket && _tcpSocket->is_open()) {
+        asio::error_code ec;
+        _tcpSocket->close(ec);
+    }
+    _tcpSocket.reset();
+    _tcpIo.reset();
+    _udpPort = 0;
+}
+
 void Screens::leaveSession() {
     teardownNet();
+    disconnectTcp();
     _connected = false;
     _entities.clear();
     _serverReturnToMenu = false;
@@ -26,13 +89,19 @@ void Screens::leaveSession() {
 
 void Screens::ensureNetSetup() {
     if (g.io) return;
+    if (_udpPort == 0) {
+        logMessage("UDP port not set - TCP handshake may have failed", "ERROR");
+        return;
+    }
     g.io = std::make_unique<asio::io_context>();
     g.sock = std::make_unique<asio::ip::udp::socket>(*g.io);
     g.sock->open(asio::ip::udp::v4());
     asio::ip::udp::resolver resolver(*g.io);
-    g.server = *resolver.resolve(asio::ip::udp::v4(), _serverAddr, _serverPort).begin();
+    g.server = *resolver.resolve(asio::ip::udp::v4(), _serverAddr, std::to_string(_udpPort)).begin();
     g.sock->non_blocking(true);
     _serverReturnToMenu = false;
+
+   // Send UDP Hello with username to bind
     rtype::net::Header hdr{};
     hdr.version = rtype::net::ProtocolVersion;
     hdr.type = rtype::net::MsgType::Hello;
@@ -120,21 +189,27 @@ bool Screens::waitHelloAck(double timeoutSec) {
     double start = GetTime();
     while (GetTime() - start < timeoutSec) {
         asio::ip::udp::endpoint from;
-        std::array<char, 1024> in{};
+        std::array<char, 8192> in{};
         asio::error_code ec;
         std::size_t n = g.sock->receive_from(asio::buffer(in), from, 0, ec);
         if (!ec && n >= sizeof(rtype::net::Header)) {
             auto* rh = reinterpret_cast<rtype::net::Header*>(in.data());
             if (rh->version == rtype::net::ProtocolVersion) {
-                if (rh->type == rtype::net::MsgType::HelloAck) return true;
+                if (rh->type == rtype::net::MsgType::Roster ||
+                    rh->type == rtype::net::MsgType::State ||
+                    rh->type == rtype::net::MsgType::LivesUpdate ||
+                    rh->type == rtype::net::MsgType::ScoreUpdate) {
+                    handleNetPacket(in.data(), n);
+                    return true;
+                }
                 handleNetPacket(in.data(), n);
             }
-        } else if (ec && ec != asio::error::would_block) {
+        } else if (ec && ec != asio::error::would_block && ec != asio::error::try_again) {
             logMessage(std::string("Receive error: ") + ec.message(), "ERROR");
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
-    return false;
+    return true;
 }
 
 bool Screens::autoConnect(ScreenState& screen, MultiplayerForm& form) {

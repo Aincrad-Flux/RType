@@ -138,4 +138,21 @@ struct GameOverPayload {
 };
 #pragma pack(pop)
 
+// Client says Hello with username, Server replies with HelloAck with UDP port and an auth token.
+#pragma pack(push, 1)
+struct HelloAckPayload {
+    std::uint16_t udpPort; // UDP port to use
+    std::uint32_t token;   // session token to present in UDP Hello
+};
+
+#pragma pack(pop)
+
+// Over UDP: client sends Hello with token (and optional username for display)
+#pragma pack(push, 1)
+struct UdpHelloPayload {
+    std::uint32_t token;  // must match token from TCP HelloAck
+    char name[16];        // optional username (0-terminated/truncated)
+};
+#pragma pack(pop)
+
 }

@@ -25,8 +25,7 @@ void Screens::drawWaiting(ScreenState& screen) {
         return;
     }
 
-    // Connected players based on roster info (self + others)
-    int playerCount = (int)_otherPlayers.size() + (_selfId ? 1 : 0);
+    int playerCount = 1 + static_cast<int>(_otherPlayers.size());
 
     titleCentered("Lobby", (int)(h * 0.20f), (int)(h * 0.08f), RAYWHITE);
     std::string sub = "Players connected: " + std::to_string(playerCount);

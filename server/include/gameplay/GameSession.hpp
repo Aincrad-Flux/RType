@@ -29,9 +29,8 @@ public:
 
     void start();
     void stop();
-
-    // Handle UDP packet from client
     void onUdpPacket(const asio::ip::udp::endpoint& from, const char* data, std::size_t size);
+    void onTcpHello(const std::string& username, const std::string& ip);
 
 private:
     void gameLoop();
@@ -46,6 +45,8 @@ private:
 
     static std::string makeKey(const asio::ip::udp::endpoint& ep);
 
+    void bindUdpEndpoint(const asio::ip::udp::endpoint& ep, std::uint32_t playerId);
+
 private:
     asio::io_context& io_;
     SendFn send_;
@@ -56,13 +57,14 @@ private:
     std::chrono::steady_clock::time_point lastStateSend_{};
     double stateHz_ = 20.0;
 
-    std::unordered_map<std::string, std::uint32_t> endpointToPlayerId_;
+    std::unordered_map<std::string, std::uint32_t> endpointToPlayerId_; // key "ip:port"
     std::unordered_map<std::string, asio::ip::udp::endpoint> keyToEndpoint_;
     std::unordered_map<std::uint32_t, std::uint8_t> playerInputBits_;
     std::unordered_map<std::uint32_t, std::string> playerNames_;
     std::unordered_map<std::uint32_t, std::uint8_t> playerLives_;
     std::unordered_map<std::uint32_t, std::int32_t> playerScores_;
     std::int32_t lastTeamScore_ = 0;
+    std::unordered_map<std::string, std::uint32_t> pendingByIp_;
 
     rt::ecs::Registry reg_;
     std::mt19937 rng_;
@@ -77,5 +79,4 @@ private:
     std::uint8_t lobbyDifficulty_ = 1;
 };
 
-}
-
+} // namespace rtype::server::gameplay
