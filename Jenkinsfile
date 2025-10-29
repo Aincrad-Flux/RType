@@ -274,21 +274,27 @@ def postGitHubComment(String message) {
         def owner = repoInfo[-4]
         def repo = repoInfo[-3]
 
-        // Échapper les caractères spéciaux pour JSON
-        def escapedMessage = message.replaceAll('"', '\\\"').replaceAll('\n', '\\\\n')
+        // Utiliser un fichier temporaire pour éviter les problèmes d'échappement
+        def jsonFile = "${env.WORKSPACE}/.github_comment.json"
+        def jsonContent = groovy.json.JsonOutput.toJson([body: message])
+
+        writeFile file: jsonFile, text: jsonContent
 
         def response = sh(
             script: """
                 curl -s -w "\\n%{http_code}" -X POST \
-                    -H "Authorization: Bearer \${GITHUB_TOKEN}" \
+                    -H "Authorization: Bearer ${GITHUB_TOKEN}" \
                     -H "Accept: application/vnd.github+json" \
                     -H "X-GitHub-Api-Version: 2022-11-28" \
                     -H "Content-Type: application/json" \
-                    -d '{"body": "${escapedMessage}"}' \
+                    --data-binary @${jsonFile} \
                     "https://api.github.com/repos/${owner}/${repo}/issues/${env.CHANGE_ID}/comments"
             """,
             returnStdout: true
         ).trim()
+
+        // Nettoyage du fichier temporaire
+        sh "rm -f ${jsonFile}"
 
         def lines = response.split('\n')
         def httpCode = lines[-1]
@@ -325,22 +331,32 @@ def setGitHubStatus(String state, String description) {
         echo "   - Commit: ${env.GIT_COMMIT}"
         echo "   - State: ${state}"
 
-        // Échapper les caractères spéciaux pour JSON
-        def escapedDescription = description.replaceAll('"', '\\\"')
+        // Utiliser un fichier temporaire pour éviter les problèmes d'échappement
+        def jsonFile = "${env.WORKSPACE}/.github_status.json"
+        def jsonContent = groovy.json.JsonOutput.toJson([
+            state: state,
+            target_url: env.BUILD_URL,
+            description: description,
+            context: 'continuous-integration/jenkins/pr-merge'
+        ])
 
-        // Utiliser directement le token avec curl au lieu de l'intégration Jenkins
+        writeFile file: jsonFile, text: jsonContent
+
         def response = sh(
             script: """
                 curl -s -w "\\n%{http_code}" -X POST \
-                    -H "Authorization: token \${GITHUB_TOKEN}" \
+                    -H "Authorization: Bearer ${GITHUB_TOKEN}" \
                     -H "Accept: application/vnd.github+json" \
                     -H "X-GitHub-Api-Version: 2022-11-28" \
                     -H "Content-Type: application/json" \
-                    -d '{"state": "${state}", "target_url": "${env.BUILD_URL}", "description": "${escapedDescription}", "context": "continuous-integration/jenkins/pr-merge"}' \
+                    --data-binary @${jsonFile} \
                     "https://api.github.com/repos/${owner}/${repo}/statuses/${env.GIT_COMMIT}"
             """,
             returnStdout: true
         ).trim()
+
+        // Nettoyage du fichier temporaire
+        sh "rm -f ${jsonFile}"
 
         def lines = response.split('\n')
         def httpCode = lines[-1]
@@ -368,6 +384,10 @@ def setGitHubStatus(String state, String description) {
         def statusIcon = ['pending': '🔄', 'success': '✅', 'failure': '❌']
         def icon = statusIcon[state] ?: '📝'
         def fallbackMsg = "**${icon} CI Status Update:** ${description}\n\n📊 [View Jenkins Build #${env.BUILD_NUMBER}](${env.BUILD_URL})\n\n_Note: Erreur lors de la mise à jour du status commit_"
+        postGitHubComment(fallbackMsg)
+        return false
+    }
+}
         postGitHubComment(fallbackMsg)
         return false
     }
