@@ -1,36 +1,122 @@
-# R-Type (C++/CMake, ECS, UDP, raylib)
+# R-Type
 
-This is a scaffold for the R-Type project using:
-- CMake + Conan for dependency management
-- Engine with an ECS core (`rt::ecs`)
-- UDP server using standalone Asio
-- Client using raylib for rendering
+Modern C++ (C++20) implementation of the classic R-Type as a networked game with:
+- A custom game engine based on an ECS architecture (see `engine/`)
+- A multithreaded authoritative server using standalone Asio over UDP (+ TCP side-channel)
+- A graphical client using raylib (OpenGL/X11 on Linux)
 
-## Build (macOS/Linux)
+The project uses CMake and Conan 2 to be reproducible and self-contained.
 
-Prereqs: `conan >=2`, CMake, a C++20 compiler. On macOS, Xcode CLI tools.
+## Features (from the subject)
+- Networked gameplay: multiple clients connect to a central server over UDP.
+- Authoritative server: spawns/moves/destroys entities and broadcasts events.
+- Client renders the game, handles inputs, and stays in sync with server authority.
+- ECS-driven engine to keep rendering, networking, and game logic decoupled.
 
-Commands:
+See detailed docs in `docs/` and `Gitbook/`.
 
+## Requirements
+- Linux (client and server). Cross-platform is a stretch goal.
+- CMake ≥ 3.20
+- Conan 2.x
+- A C++20 compiler (GCC, Clang, or MSVC on Windows)
+
+Optional system libs (usually present on Linux): OpenGL and X11 runtime libraries. Conan will generate CMake targets for `opengl::opengl` and `xorg::xorg` if needed.
+
+## Quick start (CMake + Conan)
+
+First-time configure + build:
+
+```bash
+# 1) Configure (Conan will be invoked automatically by the root CMake)
+cmake -B build -S .
+
+# 2) Build (both client and server by default)
+cmake --build build
 ```
-make build        # installs deps, configures, builds
-make run-server   # runs server on UDP 4242
-make run-client   # runs raylib client
-make clean        # remove build/
+
+Executables are written to the project root:
+- `./r-type_server`
+- `./r-type_client`
+
+To build only one target:
+
+```bash
+cmake --build build --target r-type_server
+cmake --build build --target r-type_client
 ```
 
-Artifacts are in `build/bin`: `r-type_server`, `r-type_client`.
+To configure with a specific build type (e.g., Debug):
 
-## Layout
+```bash
+cmake -B build -S . -DCMAKE_BUILD_TYPE=Debug
+cmake --build build
+```
 
-- `src/common`: shared protocol types
-- `src/engine`: minimal ECS core (Registry, System, Storage)
-- `src/server`: UDP server stub using Asio
-- `src/client`: raylib window with placeholder starfield
+You can also use presets once the repo has been configured at least once:
 
-## Next Steps
+```bash
+# Configure + Build in one go
+cmake --workflow --preset all
+```
 
-- Flesh out binary protocol, message serialization and validation
-- Add systems for movement, rendering adapters, and networking
-- Implement server tick loop with fixed timestep and entity replication
-- Replace placeholder client rendering with real sprites and inputs
+Notes:
+- Avoid running CMake/Conan with `sudo`. If you previously did, fix permissions or clean the `build/` directory.
+- The root CMake handles Conan (profile detection + install) and locates the generated toolchain automatically.
+
+## Run
+
+Server (UDP port defaults to 4242; TCP side-channel uses port+1):
+
+```bash
+./r-type_server            # UDP: 4242, TCP: 4243
+./r-type_server 5000       # UDP: 5000, TCP: 5001
+```
+
+Client:
+
+```bash
+./r-type_client
+```
+
+## Project layout
+
+- `common/` – shared code (protocol and helpers)
+- `engine/` – ECS core and systems integration
+- `server/` – authoritative server (Asio UDP/TCP)
+- `client/` – raylib client and UI
+- `docs/`, `Gitbook/` – architecture, protocol, and developer docs
+
+## Documentation
+
+- Getting started: [docs/setup.md](docs/setup.md)
+- Usage guide: [docs/usage.md](docs/usage.md)
+- Troubleshooting: [docs/troubleshooting.md](docs/troubleshooting.md)
+- Architecture overview: [docs/architecture.md](docs/architecture.md)
+- Network protocol: [docs/protocol](docs/protocol/README.md)
+- API notes: [docs/api.md](docs/api.md)
+- Changelog: [docs/changelog.md](docs/changelog.md)
+- Contribution guide: [docs/pull_request.md](docs/pull_request.md)
+
+Developer details:
+- Overview: [docs/devlopper/README.md](docs/devlopper/README.md)
+- Engine internals: [docs/devlopper/engine.md](docs/devlopper/engine.md)
+- ECS graph: [docs/devlopper/ecs_graph.md](docs/devlopper/ecs_graph.md)
+- Client internals: [docs/devlopper/client.md](docs/devlopper/client.md)
+- Server internals: [docs/devlopper/server.md](docs/devlopper/server.md)
+- Protocol notes: [docs/devlopper/protocol.md](docs/devlopper/protocol.md)
+
+There is also an extended, navigable version under `Gitbook/` if you prefer browsing by topics.
+
+## Troubleshooting
+- Permission denied under `build/build/Release/generators`: you likely ran a previous configure with sudo.
+	```bash
+	sudo chown -R "$USER":"$USER" build  # or: sudo rm -rf build
+	```
+- Conan complains about an invalid build_type: pass one explicitly or let CMake default to Release.
+	```bash
+	cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
+	```
+
+## License
+See `LICENSE.md`.
