@@ -93,7 +93,7 @@ Client:
 - Usage guide: [docs/usage.md](docs/usage.md)
 - Troubleshooting: [docs/troubleshooting.md](docs/troubleshooting.md)
 - Architecture overview: [docs/architecture.md](docs/architecture.md)
-- Network protocol: [docs/protocol](docs/protocol/README.md)
+- Engine docs: [docs/engine](docs/engine/README.md)
 - API notes: [docs/api.md](docs/api.md)
 - Changelog: [docs/changelog.md](docs/changelog.md)
 - Contribution guide: [docs/pull_request.md](docs/pull_request.md)
