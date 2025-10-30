@@ -3,6 +3,7 @@
 #include <random>
 #include <limits>
 #include <vector>
+#include <iostream>
 #include "rt/game/Systems.hpp"
 using namespace rt::game;
 
@@ -247,6 +248,7 @@ rt::ecs::Entity FormationSpawnSystem::spawnSnake(rt::ecs::Registry& r, float y, 
     r.emplace<Transform>(origin, {980.f, y});
     r.emplace<Velocity>(origin, {-60.f, 0.f});
     r.emplace<Formation>(origin, {FormationType::Snake, -60.f, 70.f, 2.5f, 36.f, 0, 0});
+    std::uniform_int_distribution<int> chance(0, 99);
     for (int i = 0; i < count; ++i) {
         auto e = r.create();
         r.emplace<Transform>(e, {980.f + i * 36.f, y});
@@ -256,6 +258,11 @@ rt::ecs::Entity FormationSpawnSystem::spawnSnake(rt::ecs::Registry& r, float y, 
         r.emplace<EnemyTag>(e, {});
         r.emplace<Size>(e, {27.f, 18.f});
         r.emplace<FormationFollower>(e, {origin, static_cast<std::uint16_t>(i), i * 36.f, 0.f});
+        if (chance(rng_) < (int)shooterPercent_) {
+            // attach enemy shooter with interval scaled by difficulty
+            float interval = (difficulty_ == 2 ? 0.9f : difficulty_ == 1 ? 1.2f : 1.6f);
+            r.emplace<EnemyShooter>(e, EnemyShooter{0.f, interval, 240.f, 0.65f});
+        }
     }
     return origin;
 }
@@ -265,6 +272,7 @@ rt::ecs::Entity FormationSpawnSystem::spawnLine(rt::ecs::Registry& r, float y, i
     r.emplace<Transform>(origin, {980.f, y});
     r.emplace<Velocity>(origin, {-60.f, 0.f});
     r.emplace<Formation>(origin, {FormationType::Line, -60.f, 0.f, 0.f, 40.f, 0, 0});
+    std::uniform_int_distribution<int> chance(0, 99);
     for (int i = 0; i < count; ++i) {
         auto e = r.create();
         r.emplace<Transform>(e, {980.f + i * 40.f, y});
@@ -274,6 +282,10 @@ rt::ecs::Entity FormationSpawnSystem::spawnLine(rt::ecs::Registry& r, float y, i
         r.emplace<EnemyTag>(e, {});
         r.emplace<Size>(e, {27.f, 18.f});
         r.emplace<FormationFollower>(e, {origin, static_cast<std::uint16_t>(i), i * 40.f, 0.f});
+        if (chance(rng_) < (int)shooterPercent_) {
+            float interval = (difficulty_ == 2 ? 0.9f : difficulty_ == 1 ? 1.2f : 1.6f);
+            r.emplace<EnemyShooter>(e, EnemyShooter{0.f, interval, 240.f, 0.62f});
+        }
     }
     return origin;
 }
@@ -283,6 +295,7 @@ rt::ecs::Entity FormationSpawnSystem::spawnGrid(rt::ecs::Registry& r, float y, i
     r.emplace<Transform>(origin, {980.f, y});
     r.emplace<Velocity>(origin, {-50.f, 0.f});
     r.emplace<Formation>(origin, {FormationType::GridRect, -50.f, 0.f, 0.f, 36.f, rows, cols});
+    std::uniform_int_distribution<int> chance(0, 99);
     for (int rr = 0; rr < rows; ++rr) {
         for (int cc = 0; cc < cols; ++cc) {
             int idx = rr * cols + cc;
@@ -294,6 +307,10 @@ rt::ecs::Entity FormationSpawnSystem::spawnGrid(rt::ecs::Registry& r, float y, i
             r.emplace<EnemyTag>(e, {});
             r.emplace<Size>(e, {27.f, 18.f});
             r.emplace<FormationFollower>(e, {origin, static_cast<std::uint16_t>(idx), cc * 36.f, rr * 36.f});
+            if (chance(rng_) < (int)shooterPercent_) {
+                float interval = (difficulty_ == 2 ? 1.0f : difficulty_ == 1 ? 1.3f : 1.7f);
+                r.emplace<EnemyShooter>(e, EnemyShooter{0.f, interval, 220.f, 0.60f});
+            }
         }
     }
     return origin;
@@ -306,6 +323,7 @@ rt::ecs::Entity FormationSpawnSystem::spawnTriangle(rt::ecs::Registry& r, float 
     r.emplace<Formation>(origin, {FormationType::Triangle, -55.f, 0.f, 0.f, 36.f, rows, 0});
     int idx = 0;
     // Left-pointing triangle: apex on the left, expanding columns to the right
+    std::uniform_int_distribution<int> chance(0, 99);
     for (int cc = 0; cc < rows; ++cc) {
         int count = cc + 1; // number of enemies in this column
         float startY = -0.5f * (count - 1) * 36.f; // center vertically per column
@@ -320,6 +338,10 @@ rt::ecs::Entity FormationSpawnSystem::spawnTriangle(rt::ecs::Registry& r, float 
             r.emplace<EnemyTag>(e, {});
             r.emplace<Size>(e, {27.f, 18.f});
             r.emplace<FormationFollower>(e, {origin, static_cast<std::uint16_t>(idx++), localX, localY});
+            if (chance(rng_) < (int)shooterPercent_) {
+                float interval = (difficulty_ == 2 ? 1.0f : difficulty_ == 1 ? 1.3f : 1.7f);
+                r.emplace<EnemyShooter>(e, EnemyShooter{0.f, interval, 220.f, 0.60f});
+            }
         }
     }
     return origin;
@@ -363,7 +385,7 @@ void FormationSpawnSystem::update(rt::ecs::Registry& r, float dt) {
     }
 
     timer_ += dt;
-    if (timer_ < 3.0f) return;
+    if (timer_ < baseInterval_) return;
     timer_ = 0.f;
     // Limit to at most two active formations (origins)
     int activeFormations = 0;
@@ -387,7 +409,11 @@ void FormationSpawnSystem::update(rt::ecs::Registry& r, float dt) {
             if (minY > maxY) std::swap(minY, maxY);
             std::uniform_real_distribution<float> ydist(minY, maxY);
             y = ydist(rng_);
-            spawnSnake(r, y, 6);
+            {
+                int base = 6; int count = std::max(1, (int)std::round(base * countMultiplier_));
+                spawnSnake(r, y, count);
+                std::cout << "[server] Spawn formation: Snake y=" << y << " count=" << count << std::endl;
+            }
             break;
         }
         case 1: {
@@ -396,12 +422,18 @@ void FormationSpawnSystem::update(rt::ecs::Registry& r, float dt) {
             float maxY = kWorldH - kBottomMargin - kEnemyH;
             std::uniform_real_distribution<float> ydist(minY, maxY);
             y = ydist(rng_);
-            spawnLine(r, y, 8);
+            {
+                int base = 8; int count = std::max(1, (int)std::round(base * countMultiplier_));
+                spawnLine(r, y, count);
+                std::cout << "[server] Spawn formation: Line y=" << y << " count=" << count << std::endl;
+            }
             break;
         }
         case 2: {
             // Grid: rows x cols, vertical extent = (rows-1)*spacing + enemyH
             int rows = 3, cols = 5;
+            rows = std::max(1, (int)std::round(rows * countMultiplier_));
+            cols = std::max(1, (int)std::round(cols * countMultiplier_));
             float extent = (rows - 1) * kSpacing + kEnemyH;
             float minY = kTopMargin;
             float maxY = kWorldH - kBottomMargin - extent;
@@ -409,11 +441,13 @@ void FormationSpawnSystem::update(rt::ecs::Registry& r, float dt) {
             std::uniform_real_distribution<float> ydist(minY, maxY);
             y = ydist(rng_);
             spawnGrid(r, y, rows, cols);
+            std::cout << "[server] Spawn formation: Grid y=" << y << " rows=" << rows << " cols=" << cols << std::endl;
             break;
         }
         case 3: {
             // Triangle: vertical half-extent = 0.5*(rows-1)*spacing
             int rows = 5;
+            rows = std::max(1, (int)std::round(rows * countMultiplier_));
             float half = 0.5f * (rows - 1) * kSpacing;
             float minY = kTopMargin + half;
             float maxY = kWorldH - kBottomMargin - half - kEnemyH;
@@ -421,6 +455,7 @@ void FormationSpawnSystem::update(rt::ecs::Registry& r, float dt) {
             std::uniform_real_distribution<float> ydist(minY, maxY);
             y = ydist(rng_);
             spawnTriangle(r, y, rows);
+            std::cout << "[server] Spawn formation: Triangle y=" << y << " rows=" << rows << std::endl;
             break;
         }
         case 4: {
@@ -429,10 +464,20 @@ void FormationSpawnSystem::update(rt::ecs::Registry& r, float dt) {
             float maxY = kWorldH - kBottomMargin - 20.f; // account for big enemy height
             std::uniform_real_distribution<float> ydist(minY, maxY);
             y = ydist(rng_);
-            spawnBigShooters(r, y, 3);
+            {
+                int base = 3; int count = std::max(1, (int)std::round(base * countMultiplier_));
+                spawnBigShooters(r, y, count);
+                std::cout << "[server] Spawn formation: BigShooters y=" << y << " count=" << count << std::endl;
+            }
             break;
         }
-        default: spawnLine(r, y, 6); break;
+        default:
+            {
+                int base = 6; int count = std::max(1, (int)std::round(base * countMultiplier_));
+                spawnLine(r, y, count);
+                std::cout << "[server] Spawn formation: Line (default) y=" << y << " count=" << count << std::endl;
+            }
+            break;
     }
 }
 
@@ -507,6 +552,35 @@ void CollisionSystem::update(rt::ecs::Registry& r, float dt) {
             }
         }
     }
+
+    // Player-Enemy direct collision
+    for (auto& [player, _] : r.storage<PlayerInput>().data()) {
+        // Skip if player is invincible
+        if (auto* inv = r.get<Invincible>(player)) {
+            if (inv->timeLeft > 0.f) continue;
+        }
+
+        for (auto& [enemy, __] : r.storage<EnemyTag>().data()) {
+            if (intersects(player, enemy)) {
+                // Mark player as hit
+                if (auto* hf = r.get<HitFlag>(player)) {
+                    hf->value = true;
+                } else {
+                    r.emplace<HitFlag>(player, {true});
+                }
+                // Apply brief invincibility
+                if (auto* inv = r.get<Invincible>(player)) {
+                    inv->timeLeft = std::max(inv->timeLeft, 1.0f);
+                } else {
+                    r.emplace<Invincible>(player, {1.0f});
+                }
+                // Destroy the enemy on collision
+                toDestroy.push_back(enemy);
+                break; // Only one collision per player per frame
+            }
+        }
+    }
+
     for (auto e : toDestroy) r.destroy(e);
 }
 
@@ -607,3 +681,151 @@ void BossSystem::update(rt::ecs::Registry& r, float dt) {
         }
     }
 }
+
+// Spawn power-ups based on score thresholds
+void PowerupSpawnSystem::update(rt::ecs::Registry& r, float dt) {
+    (void)dt;
+    if (!teamScore_) return;
+
+    // Spawn power-ups for every threshold crossed
+    while (*teamScore_ >= nextPowerupScore_) {
+        // Choose a random Y position in playable area
+        constexpr float kWorldH = 600.f;
+        constexpr float kTopMargin = 56.f;
+        constexpr float kBottomMargin = 10.f;
+        float minY = kTopMargin + 16.f;
+        float maxY = kWorldH - kBottomMargin - 16.f;
+        std::uniform_real_distribution<float> ydist(minY, maxY);
+        float y = ydist(rng_);
+
+        // Spawn from right side of screen
+        float x = 1000.f + 20.f; // off-screen right
+
+        // Randomly choose power-up type
+        std::uniform_int_distribution<int> tdist(0, 3);
+        PowerupType type = static_cast<PowerupType>(tdist(rng_));
+
+        // Create the power-up entity
+        auto pu = r.create();
+        r.emplace<Transform>(pu, Transform{x, y});
+        r.emplace<Velocity>(pu, Velocity{-powerupSpeed_, 0.f});
+        r.emplace<PowerupTag>(pu, PowerupTag{type});
+        r.emplace<NetType>(pu, NetType{rtype::net::EntityType::Powerup});
+        r.emplace<Size>(pu, Size{18.f, 18.f}); // radius ~9
+
+        // Set color based on type
+        std::uint32_t color = 0xFFFFFFFF;
+        switch (type) {
+            case PowerupType::Life:         color = 0x64DC78FF; break; // green
+            case PowerupType::Invincibility: color = 0x50AAFFFF; break; // blue
+            case PowerupType::ClearBoard:    color = 0xAA50C8FF; break; // purple
+            case PowerupType::InfiniteFire:  color = 0xF0DC50FF; break; // yellow
+        }
+        r.emplace<ColorRGBA>(pu, ColorRGBA{color});
+
+        // Schedule next power-up
+        std::uniform_int_distribution<int> dd(powerupMinPts_, powerupMaxPts_);
+        nextPowerupScore_ += dd(rng_);
+    }
+}
+
+// Handle power-up collision with players
+void PowerupCollisionSystem::update(rt::ecs::Registry& r, float dt) {
+    (void)dt;
+    std::vector<rt::ecs::Entity> toDestroy;
+
+    // Helper to check AABB collision
+    auto intersects = [&r](rt::ecs::Entity a, rt::ecs::Entity b) -> bool {
+        auto* ta = r.get<Transform>(a);
+        auto* sa = r.get<Size>(a);
+        auto* tb = r.get<Transform>(b);
+        auto* sb = r.get<Size>(b);
+        if (!ta || !sa || !tb || !sb) return false;
+        float ax1 = ta->x, ay1 = ta->y, ax2 = ta->x + sa->w, ay2 = ta->y + sa->h;
+        float bx1 = tb->x, by1 = tb->y, bx2 = tb->x + sb->w, by2 = tb->y + sb->h;
+        return !(ax2 < bx1 || bx2 < ax1 || ay2 < by1 || by2 < ay1);
+    };
+
+    // Check each power-up against all players
+    auto& powerups = r.storage<PowerupTag>().data();
+    for (auto& [pu, tag] : powerups) {
+        bool collected = false;
+
+        for (auto& [player, _] : r.storage<PlayerInput>().data()) {
+            if (intersects(pu, player)) {
+                // Apply power-up effect
+                switch (tag.type) {
+                    case PowerupType::Life: {
+                        // Mark that this player should receive an extra life
+                        if (!r.get<LifePickup>(player)) {
+                            r.emplace<LifePickup>(player, LifePickup{true});
+                        }
+                        break;
+                    }
+                    case PowerupType::Invincibility: {
+                        // Grant 10 seconds of invincibility
+                        if (auto* inv = r.get<Invincible>(player)) {
+                            inv->timeLeft = std::max(inv->timeLeft, 10.0f);
+                        } else {
+                            r.emplace<Invincible>(player, Invincible{10.0f});
+                        }
+                        break;
+                    }
+                    case PowerupType::ClearBoard: {
+                        // Destroy all enemies on screen and award points
+                        std::vector<rt::ecs::Entity> enemiesToDestroy;
+                        for (auto& [e, _] : r.storage<EnemyTag>().data()) {
+                            enemiesToDestroy.push_back(e);
+                        }
+                        for (auto e : enemiesToDestroy) {
+                            toDestroy.push_back(e);
+                        }
+                        // Award score for cleared enemies
+                        if (auto* sc = r.get<Score>(player)) {
+                            sc->value += 50 * static_cast<int>(enemiesToDestroy.size());
+                        }
+                        break;
+                    }
+                    case PowerupType::InfiniteFire: {
+                        // Grant 10 seconds of infinite fire
+                        if (auto* inf = r.get<InfiniteFire>(player)) {
+                            inf->timeLeft = std::max(inf->timeLeft, 10.0f);
+                        } else {
+                            r.emplace<InfiniteFire>(player, InfiniteFire{10.0f});
+                        }
+                        break;
+                    }
+                }
+
+                collected = true;
+                toDestroy.push_back(pu);
+                break;
+            }
+        }
+
+        if (collected) continue;
+    }
+
+    for (auto e : toDestroy) {
+        r.destroy(e);
+    }
+}
+
+// Manage infinite fire timers and modify shooting behavior
+void InfiniteFireSystem::update(rt::ecs::Registry& r, float dt) {
+    auto& fires = r.storage<InfiniteFire>().data();
+    for (auto& [e, inf] : fires) {
+        inf.timeLeft -= dt;
+        if (inf.timeLeft <= 0.f) {
+            inf.timeLeft = 0.f;
+        }
+
+        // While infinite fire is active, override shooter cooldown
+        if (inf.timeLeft > 0.f) {
+            if (auto* shooter = r.get<Shooter>(e)) {
+                shooter->cooldown = 0.f; // Always ready to shoot
+            }
+        }
+    }
+}
+

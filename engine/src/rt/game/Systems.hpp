@@ -66,8 +66,20 @@ class InvincibilitySystem : public rt::ecs::System {
 
 class FormationSpawnSystem : public rt::ecs::System {
   public:
-    FormationSpawnSystem(std::mt19937& rng, float* elapsedPtr)
-        : rng_(rng), t_(elapsedPtr) {}
+  FormationSpawnSystem(std::mt19937& rng, float* elapsedPtr)
+    : rng_(rng), t_(elapsedPtr) {}
+  // Difficulty: 0=Easy,1=Normal,2=Hard
+  void setDifficulty(std::uint8_t diff) {
+    diff = std::min<std::uint8_t>(diff, 2);
+    difficulty_ = diff;
+    switch (difficulty_) {
+      case 0: baseInterval_ = 3.5f; countMultiplier_ = 0.8f; break;
+      case 1: baseInterval_ = 3.0f; countMultiplier_ = 1.0f; break;
+      case 2: baseInterval_ = 2.0f; countMultiplier_ = 1.4f; break;
+      default: baseInterval_ = 3.0f; countMultiplier_ = 1.0f; break;
+    }
+  }
+  void setShooterPercent(std::uint8_t percent) { shooterPercent_ = percent; }
     void update(rt::ecs::Registry& r, float dt) override;
   private:
     std::mt19937& rng_;
@@ -75,6 +87,41 @@ class FormationSpawnSystem : public rt::ecs::System {
     float* t_;
     // When a boss is active we suppress regular waves; resume instantly afterwards
     bool blockedByBoss_ = false;
+    // difficulty knobs
+    std::uint8_t difficulty_ = 1; // 0..2
+    float baseInterval_ = 3.0f;
+    float countMultiplier_ = 1.0f;
+    std::uint8_t shooterPercent_ = 20; // 0..100 - percentage of enemies that shoot
+    // Internal helpers to create formations
+    rt::ecs::Entity spawnSnake(rt::ecs::Registry& r, float y, int count);
+    rt::ecs::Entity spawnLine(rt::ecs::Registry& r, float y, int count);
+    rt::ecs::Entity spawnGrid(rt::ecs::Registry& r, float y, int rows, int cols);
+    rt::ecs::Entity spawnTriangle(rt::ecs::Registry& r, float y, int rows);
+    rt::ecs::Entity spawnBigShooters(rt::ecs::Registry& r, float y, int count);
+};
+
+class PowerupSpawnSystem : public rt::ecs::System {
+  public:
+    PowerupSpawnSystem(std::mt19937& rng, std::int32_t* teamScorePtr)
+      : rng_(rng), teamScore_(teamScorePtr) {}
+    void update(rt::ecs::Registry& r, float dt) override;
+  private:
+    std::mt19937& rng_;
+    std::int32_t* teamScore_;
+    std::int32_t nextPowerupScore_ = 1500;
+    int powerupMinPts_ = 1500;
+    int powerupMaxPts_ = 2000;
+    float powerupSpeed_ = 90.f;
+};
+
+class PowerupCollisionSystem : public rt::ecs::System {
+  public:
+    void update(rt::ecs::Registry& r, float dt) override;
+};
+
+class InfiniteFireSystem : public rt::ecs::System {
+  public:
+    void update(rt::ecs::Registry& r, float dt) override;
 };
 
 class CollisionSystem : public rt::ecs::System {

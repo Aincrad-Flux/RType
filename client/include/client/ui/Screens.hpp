@@ -7,6 +7,7 @@
 #include <raylib.h>
 #include <utility>
 #include <random>
+#include <asio.hpp>
 
 // ECS Engine (standalone) headers for local singleplayer test
 #include "rt/ecs/Registry.hpp"
@@ -54,6 +55,8 @@ public:
     void drawMenu(ScreenState& screen);
     void drawSingleplayer(ScreenState& screen, SingleplayerForm& form);
     void drawMultiplayer(ScreenState& screen, MultiplayerForm& form);
+    // Programmatic connect to multiplayer using the provided form
+    bool autoConnect(ScreenState& screen, MultiplayerForm& form);
     void drawWaiting(ScreenState& screen);
     void drawGameplay(ScreenState& screen);
     void drawOptions();
@@ -182,13 +185,21 @@ private:
     std::string _username;
     std::string _serverAddr;
     std::string _serverPort;
-    // lightweight UDP client
+    // TCP connection (handshake)
+    std::unique_ptr<asio::io_context> _tcpIo;
+    std::unique_ptr<asio::ip::tcp::socket> _tcpSocket;
+    std::uint16_t _udpPort = 0;  // received HelloAck
+    // TCP handshake methods
+    bool connectTcp();
+    void disconnectTcp();
+    // UDP client method for gameplay
     void ensureNetSetup();
     void teardownNet();
     void sendDisconnect();
     void sendInput(std::uint8_t bits);
+    void sendLobbyConfig(std::uint8_t difficulty, std::uint8_t baseLives);
+    void sendStartMatch();
     void pumpNetworkOnce();
-    // Block for a short time waiting for HelloAck on current UDP socket; also feeds other packets
     bool waitHelloAck(double timeoutSec);
     struct PackedEntity { unsigned id; unsigned char type; float x; float y; float vx; float vy; unsigned rgba; };
     std::vector<PackedEntity> _entities;
@@ -226,6 +237,11 @@ private:
         std::uint32_t _localPlayerId = 0; // received from Roster
         bool _haveLocalId = false;
     bool _gameOver = false; // set when our lives reach 0
+    // Lobby/match state
+    std::uint32_t _hostId = 0;
+    std::uint8_t _lobbyBaseLives = 4;   // 1..6
+    std::uint8_t _lobbyDifficulty = 1;  // 0..2
+    bool _lobbyStarted = false;
 
     // --- Client-side charge beam (Alt + Space) ---
     bool _isCharging = false;

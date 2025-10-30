@@ -51,11 +51,17 @@ struct EnemyShooter { float cooldown = 0.f; float interval = 1.0f; float bulletS
 
 struct HitFlag { bool value = false; };
 struct Invincible { float timeLeft = 0.f; };
+struct InfiniteFire { float timeLeft = 0.f; };
+struct LifePickup { bool pending = true; }; // Marker for server to grant extra life
 
 struct Score { std::int32_t value = 0; };
 
 enum class FormationType : std::uint8_t { None = 0, Snake, Line, GridRect, Triangle };
 struct Formation { FormationType type = FormationType::None; float speedX = -60.f; float amplitude = 60.f; float frequency = 2.0f; float spacing = 32.f; int rows = 0; int cols = 0; };
 struct FormationFollower { rt::ecs::Entity formation = 0; std::uint16_t index = 0; float localX = 0.f; float localY = 0.f; };
+
+// Power-up types and component
+enum class PowerupType : std::uint8_t { Life = 0, Invincibility = 1, ClearBoard = 2, InfiniteFire = 3 };
+struct PowerupTag { PowerupType type = PowerupType::Life; };
 
 }

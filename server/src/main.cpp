@@ -4,8 +4,7 @@
 #include <chrono>
 #include <asio.hpp>
 #include <string>
-#include "UdpServer.hpp"
-#include "TcpServer.hpp"
+#include "network/NetworkManager.hpp"
 
 int main(int argc, char** argv) {
     unsigned short port = 4242;
@@ -22,7 +21,6 @@ int main(int argc, char** argv) {
         }
     }
 
-    // Resolve a primary IPv4 to display (prefer 127.0.0.1 if available)
     std::string displayIp = "0.0.0.0";
     try {
         asio::io_context probe;
@@ -48,16 +46,8 @@ int main(int argc, char** argv) {
     try {
         asio::io_context io;
 
-        // Unified io_context for both servers
-        auto tcp = std::make_shared<rtype::server::TcpServer>(io, static_cast<unsigned short>(port + 1));
-        rtype::server::UdpServer udp(io, port);
-
-        udp.setTcpServer(tcp.get());
-
-        tcp->start();
-        udp.start();
-
-        // Run I/O on main thread; game loop is in UdpServer's own thread
+        rtype::server::network::NetworkManager net(io, port, static_cast<unsigned short>(port + 1));
+        net.start();
         io.run();
         return 0;
     } catch (const asio::system_error& se) {
