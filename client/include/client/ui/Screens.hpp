@@ -55,6 +55,8 @@ public:
     void drawMenu(ScreenState& screen);
     void drawSingleplayer(ScreenState& screen, SingleplayerForm& form);
     void drawMultiplayer(ScreenState& screen, MultiplayerForm& form);
+    // Programmatic connect to multiplayer using the provided form
+    bool autoConnect(ScreenState& screen, MultiplayerForm& form);
     void drawWaiting(ScreenState& screen);
     void drawGameplay(ScreenState& screen);
     void drawOptions();
@@ -175,6 +177,8 @@ private:
     void teardownNet();
     void sendDisconnect();
     void sendInput(std::uint8_t bits);
+    void sendLobbyConfig(std::uint8_t difficulty, std::uint8_t baseLives);
+    void sendStartMatch();
     void pumpNetworkOnce();
     bool waitHelloAck(double timeoutSec);
     struct PackedEntity { unsigned id; unsigned char type; float x; float y; float vx; float vy; unsigned rgba; };
@@ -213,6 +217,11 @@ private:
         std::uint32_t _localPlayerId = 0; // received from Roster
         bool _haveLocalId = false;
     bool _gameOver = false; // set when our lives reach 0
+    // Lobby/match state
+    std::uint32_t _hostId = 0;
+    std::uint8_t _lobbyBaseLives = 4;   // 1..6
+    std::uint8_t _lobbyDifficulty = 1;  // 0..2
+    bool _lobbyStarted = false;
 
     // --- Client-side charge beam (Alt + Space) ---
     bool _isCharging = false;

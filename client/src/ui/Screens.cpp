@@ -222,6 +222,53 @@ void Screens::drawMultiplayer(ScreenState& screen, MultiplayerForm& form) {
     }
 }
 
+bool Screens::autoConnect(ScreenState& screen, MultiplayerForm& form) {
+    // Mimic the Connect button path but callable programmatically
+    bool canConnect = !form.username.empty() && !form.serverAddress.empty() && !form.serverPort.empty();
+    if (!canConnect) {
+        _statusMessage = std::string("Missing host/port/name for autoconnect.");
+        return false;
+    }
+    try {
+        _username = form.username;
+        _serverAddr = form.serverAddress;
+        _serverPort = form.serverPort;
+        _selfId = 0;
+        _playerLives = 4;
+        _gameOver = false;
+        _otherPlayers.clear();
+        // TCP handshake to get UDP port
+        disconnectTcp();
+        if (!connectTcp()) {
+            _statusMessage = std::string("TCP connection failed.");
+            disconnectTcp();
+            return false;
+        }
+        // Setup UDP connection
+        teardownNet();
+        ensureNetSetup();
+        // Wait for roster/state packets
+        bool ok = waitHelloAck(1.0);
+        if (ok) {
+            _statusMessage = std::string("Player Connected.");
+            _connected = true;
+            screen = ScreenState::Waiting;
+            return true;
+        } else {
+            _statusMessage = std::string("Connection failed.");
+            teardownNet();
+            disconnectTcp();
+            return false;
+        }
+    } catch (const std::exception& e) {
+        logMessage(std::string("Exception: ") + e.what(), "ERROR");
+        _statusMessage = std::string("Error: ") + e.what();
+        teardownNet();
+        disconnectTcp();
+        return false;
+    }
+}
+
 void Screens::drawOptions() {
     int h = GetScreenHeight();
     int baseFont = baseFontFromHeight(h);
