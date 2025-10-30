@@ -11,6 +11,9 @@
 #include "common/Protocol.hpp"
 #include "rt/ecs/Registry.hpp"
 
+// Forward declaration to avoid including heavy headers in the interface
+namespace rt { namespace game { class FormationSpawnSystem; } }
+
 namespace rtype::server {
 class TcpServer;
 }
@@ -36,7 +39,9 @@ private:
     void broadcastState();
     void broadcastRoster();
     void broadcastLivesUpdate(std::uint32_t id, std::uint8_t lives);
+    void broadcastLobbyStatus();
     void maybeStartGame();
+    void cleanupGameWorld();
 
     static std::string makeKey(const asio::ip::udp::endpoint& ep);
 
@@ -67,6 +72,11 @@ private:
 
     rtype::server::TcpServer* tcp_ = nullptr;
     bool gameStarted_ = false;
+
+    // Lobby state
+    std::uint32_t hostId_ = 0;
+    std::uint8_t lobbyBaseLives_ = 4;
+    std::uint8_t lobbyDifficulty_ = 1;
 };
 
 } // namespace rtype::server::gameplay

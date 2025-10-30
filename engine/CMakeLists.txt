@@ -22,8 +22,8 @@ add_library(rtype_engine
     src/systems/PlayerControlSystem.cpp
     src/systems/AiControlSystem.cpp
     src/systems/CollisionSystem.cpp
-    # Legacy compatibility for server (rt::game API)
-    src/game_compat_Systems.cpp
+    # New gameplay systems for server (rt::game API)
+    src/Systems.cpp
 )
 
 target_include_directories(rtype_engine

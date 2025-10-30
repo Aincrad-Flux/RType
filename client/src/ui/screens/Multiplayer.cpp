@@ -42,7 +42,8 @@ void Screens::drawMultiplayer(ScreenState& screen, MultiplayerForm& form) {
 
     int btnWidth = (int)(w * 0.20f);
     int btnHeight = (int)(h * 0.08f);
-    int btnY = (int)(portBox.y + portBox.height + gapY);
+    int bottomMargin = std::max(10, (int)(h * 0.06f));
+    int btnY = std::max(0, h - bottomMargin - btnHeight);
     int btnGap = (int)(w * 0.02f);
     int btnX = (w - (btnWidth * 2 + btnGap)) / 2;
     bool canConnect = !form.username.empty() && !form.serverAddress.empty() && !form.serverPort.empty();
@@ -96,7 +97,8 @@ void Screens::drawMultiplayer(ScreenState& screen, MultiplayerForm& form) {
         screen = ScreenState::Menu;
     }
     if (!_statusMessage.empty()) {
-        titleCentered(_statusMessage.c_str(), (int)(h * 0.85f), baseFont, RAYWHITE);
+        // Place status above the bottom buttons to avoid overlap
+        titleCentered(_statusMessage.c_str(), std::max(0, btnY - (int)(h * 0.06f)), baseFont, RAYWHITE);
     }
 }
 
