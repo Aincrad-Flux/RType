@@ -25,17 +25,40 @@ void Screens::drawWaiting(ScreenState& screen) {
         return;
     }
 
-    // Connected players based on roster info (self + others)
-    int playerCount = (int)_otherPlayers.size() + (_selfId ? 1 : 0);
+    int playerCount = 1 + static_cast<int>(_otherPlayers.size());
 
     titleCentered("Lobby", (int)(h * 0.20f), (int)(h * 0.08f), RAYWHITE);
     std::string sub = "Players connected: " + std::to_string(playerCount);
     titleCentered(sub.c_str(), (int)(h * 0.32f), baseFont, RAYWHITE);
 
     // Precompute bottom layout to place Start just above Cancel
+    int btnWidth = (int)(w * 0.18f);
+    int btnHeight = (int)(h * 0.08f);
+    int bottomMargin = std::max(10, (int)(h * 0.04f));
     int cancelBtnHeightPlan = (int)(h * 0.08f);
     int bottomMarginPlan = std::max(10, (int)(h * 0.04f));
     int cancelYPlan = std::max(0, h - bottomMarginPlan - cancelBtnHeightPlan);
+
+    // Draw player list on the left side
+    int listX = (int)(w * 0.05f);
+    int listY = (int)(h * 0.40f);
+    int listItemHeight = (int)(h * 0.05f);
+    DrawText("Players:", listX, listY, baseFont, RAYWHITE);
+
+    // Show self first
+    int currentY = listY + listItemHeight;
+    if (_selfId != 0) {
+        std::string selfDisplay = _username + " (You)";
+        DrawText(selfDisplay.c_str(), listX + 10, currentY, baseFont - 2, GREEN);
+        currentY += listItemHeight;
+    }
+
+    // Show other players
+    for (const auto& op : _otherPlayers) {
+        if (currentY >= cancelYPlan - listItemHeight) break; // Don't overlap with buttons
+        DrawText(op.name.c_str(), listX + 10, currentY, baseFont - 2, RAYWHITE);
+        currentY += listItemHeight;
+    }
 
     // Host-only settings panel
     if (_selfId != 0 && _selfId == _hostId) {
@@ -44,6 +67,7 @@ void Screens::drawWaiting(ScreenState& screen) {
         int px = (w - panelW) / 2;
         int py = (int)(h * 0.40f);
         DrawRectangle(px, py, panelW, panelH, (Color){0, 0, 0, 120});
+
         titleCentered("Host settings", py + (int)(h * 0.02f), baseFont, RAYWHITE);
 
         // Difficulty selector
@@ -91,10 +115,8 @@ void Screens::drawWaiting(ScreenState& screen) {
         titleCentered(hint.c_str(), (int)(h * 0.48f), baseFont, LIGHTGRAY);
     }
 
-    int btnWidth = (int)(w * 0.18f);
-    int btnHeight = (int)(h * 0.08f);
+    // Cancel button at bottom
     int x = (w - btnWidth) / 2;
-    int bottomMargin = std::max(10, (int)(h * 0.04f));
     int y = std::max(0, h - bottomMargin - btnHeight);
     Rectangle cancelBtn{(float)x, (float)y, (float)btnWidth, (float)btnHeight};
     if (button(cancelBtn, "Cancel", baseFont, BLACK, LIGHTGRAY, GRAY)) {

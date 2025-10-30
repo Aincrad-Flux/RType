@@ -15,15 +15,18 @@ enum class MsgType : std::uint8_t {
     Pong,
     Roster,     // list of players with names and lives (sent on join/leave)
     LivesUpdate, // notify when a player's lives change
-    ScoreUpdate, // notify when a player's score changes (authoritative)
+    ScoreUpdate, // server -> clients: notify score changes (authoritative; team total)
+    // Lobby/match control (UDP)
+    LobbyStatus,   // server -> clients: lobby parameters and started flag
+    LobbyConfig,   // host client -> server: request config change
+    StartMatch,    // host client -> server: request match start
+    GameOver,      // server -> clients: notify end of game
     // New messages
     Disconnect,     // client -> server: explicit disconnect notice
     ReturnToMenu,   // server -> client: ask client to return to menu (e.g., too few players)
-    // Lobby/match flow
-    LobbyStatus,    // server -> client: host id and current lobby settings
-    LobbyConfig,    // client (host) -> server: change settings (difficulty, baseLives)
-    StartMatch,     // client (host) -> server: start the game
-    GameOver        // server -> client: match ended (all players dead)
+
+    TcpWelcome = 100,
+    StartGame  = 101
 };
 
 struct Header {
@@ -52,6 +55,7 @@ enum class EntityType : std::uint8_t {
     Player = 1,
     Enemy  = 2,
     Bullet = 3,
+    Powerup = 4,
 };
 
 #pragma pack(push, 1)
@@ -99,11 +103,11 @@ struct LivesUpdatePayload {
 };
 #pragma pack(pop)
 
-// One-off update for a single player's score change
+// Score update broadcast (currently conveys team total score)
 #pragma pack(push, 1)
 struct ScoreUpdatePayload {
     std::uint32_t id;
-    std::int32_t score; // new total score
+    std::int32_t score; // new total score (id may be 0 for team total)
 };
 #pragma pack(pop)
 
@@ -131,6 +135,23 @@ struct LobbyConfigPayload {
 #pragma pack(push, 1)
 struct GameOverPayload {
     std::uint8_t reason; // 0=allDead, 1=hostLeft, etc. (reserved)
+};
+#pragma pack(pop)
+
+// Client says Hello with username, Server replies with HelloAck with UDP port and an auth token.
+#pragma pack(push, 1)
+struct HelloAckPayload {
+    std::uint16_t udpPort; // UDP port to use
+    std::uint32_t token;   // session token to present in UDP Hello
+};
+
+#pragma pack(pop)
+
+// Over UDP: client sends Hello with token (and optional username for display)
+#pragma pack(push, 1)
+struct UdpHelloPayload {
+    std::uint32_t token;  // must match token from TCP HelloAck
+    char name[16];        // optional username (0-terminated/truncated)
 };
 #pragma pack(pop)
 

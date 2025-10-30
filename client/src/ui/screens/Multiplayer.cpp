@@ -62,22 +62,33 @@ void Screens::drawMultiplayer(ScreenState& screen, MultiplayerForm& form) {
                 _gameOver = false;
                 _otherPlayers.clear();
 
-                teardownNet();
-                ensureNetSetup();
-
-                bool ok = waitHelloAck(1.0);
-                if (ok) {
-                    _statusMessage = std::string("Player Connected.");
-                    _connected = true;
-                    screen = ScreenState::Waiting;
+                // TCP handshake to get UDP port
+                disconnectTcp();
+                if (!connectTcp()) {
+                    _statusMessage = std::string("TCP connection failed.");
+                    disconnectTcp();
                 } else {
-                    _statusMessage = std::string("Connection failed.");
+                    // Setup UDP connection
                     teardownNet();
+                    ensureNetSetup();
+
+                    // Wait for roster/state packets
+                    bool ok = waitHelloAck(1.0);
+                    if (ok) {
+                        _statusMessage = std::string("Player Connected.");
+                        _connected = true;
+                        screen = ScreenState::Waiting;
+                    } else {
+                        _statusMessage = std::string("Connection failed.");
+                        teardownNet();
+                        disconnectTcp();
+                    }
                 }
             } catch (const std::exception& e) {
                 logMessage(std::string("Exception: ") + e.what(), "ERROR");
                 _statusMessage = std::string("Error: ") + e.what();
                 teardownNet();
+                disconnectTcp();
             }
         }
     }

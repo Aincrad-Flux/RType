@@ -496,8 +496,7 @@ void CollisionSystem::update(rt::ecs::Registry& r, float dt) {
                     // award score to bullet owner if any
                     if (auto* bo = r.get<BulletOwner>(b)) {
                         if (auto* sc = r.get<Score>(bo->owner)) {
-                            bool isShooter = r.get<EnemyShooter>(e) != nullptr;
-                            sc->value += isShooter ? 200 : 100;
+                            sc->value += 50;
                         }
                     }
                     // Beams persist through multiple hits in the same frame; regular bullets are destroyed on first hit
@@ -532,6 +531,35 @@ void CollisionSystem::update(rt::ecs::Registry& r, float dt) {
             }
         }
     }
+
+    // Player-Enemy direct collision
+    for (auto& [player, _] : r.storage<PlayerInput>().data()) {
+        // Skip if player is invincible
+        if (auto* inv = r.get<Invincible>(player)) {
+            if (inv->timeLeft > 0.f) continue;
+        }
+
+        for (auto& [enemy, __] : r.storage<EnemyTag>().data()) {
+            if (intersects(player, enemy)) {
+                // Mark player as hit
+                if (auto* hf = r.get<HitFlag>(player)) {
+                    hf->value = true;
+                } else {
+                    r.emplace<HitFlag>(player, {true});
+                }
+                // Apply brief invincibility
+                if (auto* inv = r.get<Invincible>(player)) {
+                    inv->timeLeft = std::max(inv->timeLeft, 1.0f);
+                } else {
+                    r.emplace<Invincible>(player, {1.0f});
+                }
+                // Destroy the enemy on collision
+                toDestroy.push_back(enemy);
+                break; // Only one collision per player per frame
+            }
+        }
+    }
+
     for (auto e : toDestroy) r.destroy(e);
 }
 
@@ -546,3 +574,151 @@ void InvincibilitySystem::update(rt::ecs::Registry& r, float dt) {
         }
     }
 }
+
+// Spawn power-ups based on score thresholds
+void PowerupSpawnSystem::update(rt::ecs::Registry& r, float dt) {
+    (void)dt;
+    if (!teamScore_) return;
+
+    // Spawn power-ups for every threshold crossed
+    while (*teamScore_ >= nextPowerupScore_) {
+        // Choose a random Y position in playable area
+        constexpr float kWorldH = 600.f;
+        constexpr float kTopMargin = 56.f;
+        constexpr float kBottomMargin = 10.f;
+        float minY = kTopMargin + 16.f;
+        float maxY = kWorldH - kBottomMargin - 16.f;
+        std::uniform_real_distribution<float> ydist(minY, maxY);
+        float y = ydist(rng_);
+
+        // Spawn from right side of screen
+        float x = 1000.f + 20.f; // off-screen right
+
+        // Randomly choose power-up type
+        std::uniform_int_distribution<int> tdist(0, 3);
+        PowerupType type = static_cast<PowerupType>(tdist(rng_));
+
+        // Create the power-up entity
+        auto pu = r.create();
+        r.emplace<Transform>(pu, Transform{x, y});
+        r.emplace<Velocity>(pu, Velocity{-powerupSpeed_, 0.f});
+        r.emplace<PowerupTag>(pu, PowerupTag{type});
+        r.emplace<NetType>(pu, NetType{rtype::net::EntityType::Powerup});
+        r.emplace<Size>(pu, Size{18.f, 18.f}); // radius ~9
+
+        // Set color based on type
+        std::uint32_t color = 0xFFFFFFFF;
+        switch (type) {
+            case PowerupType::Life:         color = 0x64DC78FF; break; // green
+            case PowerupType::Invincibility: color = 0x50AAFFFF; break; // blue
+            case PowerupType::ClearBoard:    color = 0xAA50C8FF; break; // purple
+            case PowerupType::InfiniteFire:  color = 0xF0DC50FF; break; // yellow
+        }
+        r.emplace<ColorRGBA>(pu, ColorRGBA{color});
+
+        // Schedule next power-up
+        std::uniform_int_distribution<int> dd(powerupMinPts_, powerupMaxPts_);
+        nextPowerupScore_ += dd(rng_);
+    }
+}
+
+// Handle power-up collision with players
+void PowerupCollisionSystem::update(rt::ecs::Registry& r, float dt) {
+    (void)dt;
+    std::vector<rt::ecs::Entity> toDestroy;
+
+    // Helper to check AABB collision
+    auto intersects = [&r](rt::ecs::Entity a, rt::ecs::Entity b) -> bool {
+        auto* ta = r.get<Transform>(a);
+        auto* sa = r.get<Size>(a);
+        auto* tb = r.get<Transform>(b);
+        auto* sb = r.get<Size>(b);
+        if (!ta || !sa || !tb || !sb) return false;
+        float ax1 = ta->x, ay1 = ta->y, ax2 = ta->x + sa->w, ay2 = ta->y + sa->h;
+        float bx1 = tb->x, by1 = tb->y, bx2 = tb->x + sb->w, by2 = tb->y + sb->h;
+        return !(ax2 < bx1 || bx2 < ax1 || ay2 < by1 || by2 < ay1);
+    };
+
+    // Check each power-up against all players
+    auto& powerups = r.storage<PowerupTag>().data();
+    for (auto& [pu, tag] : powerups) {
+        bool collected = false;
+
+        for (auto& [player, _] : r.storage<PlayerInput>().data()) {
+            if (intersects(pu, player)) {
+                // Apply power-up effect
+                switch (tag.type) {
+                    case PowerupType::Life: {
+                        // Mark that this player should receive an extra life
+                        if (!r.get<LifePickup>(player)) {
+                            r.emplace<LifePickup>(player, LifePickup{true});
+                        }
+                        break;
+                    }
+                    case PowerupType::Invincibility: {
+                        // Grant 10 seconds of invincibility
+                        if (auto* inv = r.get<Invincible>(player)) {
+                            inv->timeLeft = std::max(inv->timeLeft, 10.0f);
+                        } else {
+                            r.emplace<Invincible>(player, Invincible{10.0f});
+                        }
+                        break;
+                    }
+                    case PowerupType::ClearBoard: {
+                        // Destroy all enemies on screen and award points
+                        std::vector<rt::ecs::Entity> enemiesToDestroy;
+                        for (auto& [e, _] : r.storage<EnemyTag>().data()) {
+                            enemiesToDestroy.push_back(e);
+                        }
+                        for (auto e : enemiesToDestroy) {
+                            toDestroy.push_back(e);
+                        }
+                        // Award score for cleared enemies
+                        if (auto* sc = r.get<Score>(player)) {
+                            sc->value += 50 * static_cast<int>(enemiesToDestroy.size());
+                        }
+                        break;
+                    }
+                    case PowerupType::InfiniteFire: {
+                        // Grant 10 seconds of infinite fire
+                        if (auto* inf = r.get<InfiniteFire>(player)) {
+                            inf->timeLeft = std::max(inf->timeLeft, 10.0f);
+                        } else {
+                            r.emplace<InfiniteFire>(player, InfiniteFire{10.0f});
+                        }
+                        break;
+                    }
+                }
+
+                collected = true;
+                toDestroy.push_back(pu);
+                break;
+            }
+        }
+
+        if (collected) continue;
+    }
+
+    for (auto e : toDestroy) {
+        r.destroy(e);
+    }
+}
+
+// Manage infinite fire timers and modify shooting behavior
+void InfiniteFireSystem::update(rt::ecs::Registry& r, float dt) {
+    auto& fires = r.storage<InfiniteFire>().data();
+    for (auto& [e, inf] : fires) {
+        inf.timeLeft -= dt;
+        if (inf.timeLeft <= 0.f) {
+            inf.timeLeft = 0.f;
+        }
+
+        // While infinite fire is active, override shooter cooldown
+        if (inf.timeLeft > 0.f) {
+            if (auto* shooter = r.get<Shooter>(e)) {
+                shooter->cooldown = 0.f; // Always ready to shoot
+            }
+        }
+    }
+}
+

@@ -7,6 +7,7 @@
 #include <raylib.h>
 #include <utility>
 #include <random>
+#include <asio.hpp>
 
 // ECS Engine (standalone) headers for local singleplayer test
 #include "rt/ecs/Registry.hpp"
@@ -81,6 +82,10 @@ private:
     void shutdownSingleplayerWorld();
     void updateSingleplayerWorld(float dt);
     void drawSingleplayerWorld();
+    // Power-ups helpers (bonus logic isolated)
+    void spHandleScoreThresholdSpawns(int screenW);
+    void spUpdatePowerups(float dt);
+    void spDrawPowerups();
     // Formation wave spawners (singleplayer sandbox)
     void spSpawnLine(int count, float y);
     void spSpawnSnake(int count, float y, float amplitude, float frequency, float spacing);
@@ -130,6 +135,22 @@ private:
     float _spHeat = 1.0f;           // 0..1
     float _spHeatDrainPerSec = 0.30f;
     float _spHeatRegenPerSec = 0.15f;
+    // Singleplayer power-ups (Life / Invincibility / ClearBoard / InfiniteFire)
+    enum class SpPowerupType { Life = 0, Invincibility = 1, ClearBoard = 2, InfiniteFire = 3 };
+    struct SpPowerup { float x; float y; float vx; float radius; SpPowerupType type; };
+    std::vector<SpPowerup> _spPowerups;
+    int _spNextPowerupScore = 1500;        // next score threshold for spawning a power-up
+    int _spPowerupMinPts = 1500;           // min interval in points between spawns
+    int _spPowerupMaxPts = 2000;           // max interval in points between spawns
+    float _spPowerupSpeed = 90.f;          // pixels per second to the left
+    float _spPowerupRadius = 9.f;          // visual/collision radius
+    // Invincibility shield state
+    float _spInvincibleTimer = 0.f;        // seconds remaining of invincibility (shield)
+    float _spInvincibleDuration = 10.0f;   // seconds of invincibility on pickup
+    float _spShieldRadius = 20.0f;         // visual radius of the shield around player
+    // Infinite fire state
+    float _spInfiniteFireTimer = 0.f;      // seconds remaining of infinite fire
+    float _spInfiniteFireDuration = 10.0f; // seconds of infinite fire on pickup
     // We keep systems owned by the world; stored here for clarity
     bool _spInitialized = false;
 
@@ -144,7 +165,14 @@ private:
     std::string _username;
     std::string _serverAddr;
     std::string _serverPort;
-    // lightweight UDP client
+    // TCP connection (handshake)
+    std::unique_ptr<asio::io_context> _tcpIo;
+    std::unique_ptr<asio::ip::tcp::socket> _tcpSocket;
+    std::uint16_t _udpPort = 0;  // received HelloAck
+    // TCP handshake methods
+    bool connectTcp();
+    void disconnectTcp();
+    // UDP client method for gameplay
     void ensureNetSetup();
     void teardownNet();
     void sendDisconnect();
@@ -152,7 +180,6 @@ private:
     void sendLobbyConfig(std::uint8_t difficulty, std::uint8_t baseLives);
     void sendStartMatch();
     void pumpNetworkOnce();
-    // Block for a short time waiting for HelloAck on current UDP socket; also feeds other packets
     bool waitHelloAck(double timeoutSec);
     struct PackedEntity { unsigned id; unsigned char type; float x; float y; float vx; float vy; unsigned rgba; };
     std::vector<PackedEntity> _entities;
