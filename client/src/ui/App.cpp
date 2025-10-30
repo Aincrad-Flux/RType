@@ -74,6 +74,9 @@ void App::run() {
                 }
                 _screens.drawGameplay(_screen);
                 break;
+            case ScreenState::GameOver:
+                _screens.drawGameOver(_screen);
+                break;
             case ScreenState::Options: _screens.drawOptions(); break;
             case ScreenState::Leaderboard: _screens.drawLeaderboard(); break;
             case ScreenState::NotEnoughPlayers: _screens.drawNotEnoughPlayers(_screen); break;
