@@ -390,6 +390,26 @@ void Screens::updateSingleplayerWorld(float dt) {
 
     _spWorld->update(dt);
 
+    // Clamp player inside the game area (stay within screen and above the bottom HUD bar)
+    if (auto* pos = _spWorld->get<rt::components::Position>(_spPlayer)) {
+        float pw = 24.f, ph = 16.f;
+        if (auto* sz = _spWorld->get<rt::components::Size>(_spPlayer)) {
+            pw = sz->w;
+            ph = sz->h;
+        }
+        int sw = GetScreenWidth();
+        int sh = GetScreenHeight();
+        int barH = (int)(sh * 0.06f);
+        float minX = 0.f;
+        float minY = 0.f;
+        float maxX = (float)sw - pw;
+        float maxY = (float)sh - barH - ph;
+        if (maxX < minX) maxX = minX;
+        if (maxY < minY) maxY = minY;
+        pos->x = std::clamp(pos->x, minX, maxX);
+        pos->y = std::clamp(pos->y, minY, maxY);
+    }
+
     // If engine marked player as collided, decrement life and clear flag
     if (auto* col = _spWorld->get<rt::components::Collided>(_spPlayer)) {
         if (col->value && _spHitIframes <= 0.f && _playerLives > 0 && _spInvincibleTimer <= 0.f) {
