@@ -3,6 +3,7 @@
 #include <thread>
 #include <array>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <random>
 #include <string>
@@ -37,6 +38,7 @@ private:
     void checkTimeouts();
     void removeClient(const std::string& key);
     void broadcastState();
+    void broadcastDespawn(std::uint32_t entityId);
     void broadcastRoster();
     void broadcastLivesUpdate(std::uint32_t id, std::uint8_t lives);
     void broadcastLobbyStatus();
@@ -69,6 +71,7 @@ private:
     rt::ecs::Registry reg_;
     std::mt19937 rng_;
     std::unordered_map<std::string, std::chrono::steady_clock::time_point> lastSeen_;
+    std::unordered_set<std::uint32_t> lastKnownEntityIds_; // Track entities from previous tick to detect deletions
 
     rtype::server::TcpServer* tcp_ = nullptr;
     bool gameStarted_ = false;

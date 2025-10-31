@@ -164,6 +164,7 @@ void GameSession::onUdpPacket(const asio::ip::udp::endpoint& from, const char* d
 
             // Make sure game world is clean before starting
             cleanupGameWorld();
+            lastKnownEntityIds_.clear(); // Reset entity tracking
 
             std::cout << "[server] Game initialized for " << playerLives_.size() << " players\n";
 
@@ -293,6 +294,22 @@ void GameSession::gameLoop() {
 
         auto now = clock::now();
         if (std::chrono::duration<double>(now - lastStateSend_).count() >= stateInterval) {
+            // Detect destroyed entities by comparing before/after entity sets
+            std::unordered_set<std::uint32_t> currentEntityIds;
+            std::unordered_set<std::uint32_t> playerIds;
+            for (const auto& [_, pid] : endpointToPlayerId_) {
+                playerIds.insert(pid);
+            }
+            for (auto& [e, nt] : reg_.storage<rt::game::NetType>().data()) {
+                currentEntityIds.insert(e);
+            }
+            // Send Despawn for entities that disappeared (excluding players)
+            for (std::uint32_t id : lastKnownEntityIds_) {
+                if (currentEntityIds.find(id) == currentEntityIds.end() && playerIds.find(id) == playerIds.end()) {
+                    broadcastDespawn(id);
+                }
+            }
+            lastKnownEntityIds_ = currentEntityIds;
             broadcastState();
             lastStateSend_ = now;
         }
@@ -369,12 +386,25 @@ void GameSession::removeClient(const std::string& key) {
     }
 }
 
+void GameSession::broadcastDespawn(std::uint32_t entityId) {
+    rtype::net::Header hdr{};
+    hdr.size = sizeof(std::uint32_t);
+    hdr.type = rtype::net::MsgType::Despawn;
+    hdr.version = rtype::net::ProtocolVersion;
+    std::vector<char> out(sizeof(hdr) + sizeof(std::uint32_t));
+    std::memcpy(out.data(), &hdr, sizeof(hdr));
+    std::memcpy(out.data() + sizeof(hdr), &entityId, sizeof(entityId));
+    for (const auto& [_, ep] : keyToEndpoint_)
+        send_(ep, out.data(), out.size());
+}
+
 void GameSession::broadcastState() {
     rtype::net::Header hdr{};
     hdr.version = rtype::net::ProtocolVersion;
     hdr.type = rtype::net::MsgType::State;
 
-    constexpr std::size_t kMaxUdpBytes   = 1200;
+    // Slightly larger snapshot budget; still below common MTU (~1500)
+    constexpr std::size_t kMaxUdpBytes   = 1400;
     constexpr std::size_t kHeaderBytes   = sizeof(rtype::net::Header);
     constexpr std::size_t kStateHdrBytes = sizeof(rtype::net::StateHeader);
     constexpr std::size_t kEntBytes      = sizeof(rtype::net::PackedEntity);
@@ -410,30 +440,39 @@ void GameSession::broadcastState() {
         }
     }
 
-    std::vector<rtype::net::PackedEntity> net;
-    net.reserve(std::min<std::size_t>(players.size() + bullets.size() + enemies.size() + powerups.size(), maxEntities));
-    auto appendLimited = [&](const std::vector<rtype::net::PackedEntity>& src) {
-        for (const auto& pe : src) {
-            if (net.size() >= maxEntities) break;
-            net.push_back(pe);
-        }
+    // Split across two datagrams to avoid crowding out enemies when bullets spike.
+    auto sendBatch = [&](const std::vector<rtype::net::PackedEntity>& batch) {
+        rtype::net::StateHeader sh{};
+        sh.count = static_cast<std::uint16_t>(batch.size());
+        std::size_t payloadSize = sizeof(rtype::net::StateHeader) + batch.size() * sizeof(rtype::net::PackedEntity);
+        hdr.size = static_cast<std::uint16_t>(payloadSize);
+        std::vector<char> out(sizeof(rtype::net::Header) + payloadSize);
+        std::memcpy(out.data(), &hdr, sizeof(hdr));
+        std::memcpy(out.data() + sizeof(hdr), &sh, sizeof(sh));
+        auto* arr = reinterpret_cast<rtype::net::PackedEntity*>(out.data() + sizeof(hdr) + sizeof(sh));
+        for (std::uint16_t i = 0; i < sh.count; ++i) arr[i] = batch[i];
+        for (const auto& [key, ep] : keyToEndpoint_) send_(ep, out.data(), out.size());
     };
-    appendLimited(players); appendLimited(bullets); appendLimited(powerups); appendLimited(enemies);
 
-    rtype::net::StateHeader sh{};
-    sh.count = static_cast<std::uint16_t>(net.size());
+    // Packet A: players + enemies (authoritative for presence)
+    std::vector<rtype::net::PackedEntity> a;
+    a.reserve(std::min<std::size_t>(players.size() + enemies.size(), maxEntities));
+    auto appendLimitedA = [&](const std::vector<rtype::net::PackedEntity>& src) {
+        for (const auto& pe : src) { if (a.size() >= maxEntities) break; a.push_back(pe); }
+    };
+    appendLimitedA(players);
+    appendLimitedA(enemies);
+    sendBatch(a);
 
-    std::size_t payloadSize = sizeof(rtype::net::StateHeader) + net.size() * sizeof(rtype::net::PackedEntity);
-    hdr.size = static_cast<std::uint16_t>(payloadSize);
-
-    std::vector<char> out(sizeof(rtype::net::Header) + payloadSize);
-    std::memcpy(out.data(), &hdr, sizeof(hdr));
-    std::memcpy(out.data() + sizeof(hdr), &sh, sizeof(sh));
-    auto* arr = reinterpret_cast<rtype::net::PackedEntity*>(out.data() + sizeof(hdr) + sizeof(sh));
-    for (std::uint16_t i = 0; i < sh.count; ++i) arr[i] = net[i];
-
-    for (const auto& [key, ep] : keyToEndpoint_)
-        send_(ep, out.data(), out.size());
+    // Packet B: bullets + powerups (may be many; send as much as fits)
+    std::vector<rtype::net::PackedEntity> b;
+    b.reserve(std::min<std::size_t>(bullets.size() + powerups.size(), maxEntities));
+    auto appendLimitedB = [&](const std::vector<rtype::net::PackedEntity>& src) {
+        for (const auto& pe : src) { if (b.size() >= maxEntities) break; b.push_back(pe); }
+    };
+    appendLimitedB(bullets);
+    appendLimitedB(powerups);
+    if (!b.empty()) sendBatch(b);
 }
 
 void GameSession::broadcastRoster() {
