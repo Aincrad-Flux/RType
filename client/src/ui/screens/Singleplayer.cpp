@@ -110,10 +110,10 @@ void Screens::initSingleplayerWorld() {
     _spWorld->addSystem(std::make_unique<rt::systems::CollisionSystem>());
     // Player entity
     auto player = _spWorld->create();
-    player.add<rt::components::Position>(100.f, 100.f);
-    player.add<rt::components::Controller>();
-    player.add<rt::components::Player>();
-    player.add<rt::components::Size>(24.f, 16.f);
+    _spWorld->emplace<rt::components::Position>((rt::ecs::Entity)player, rt::components::Position{100.f, 100.f});
+    _spWorld->emplace<rt::components::Controller>((rt::ecs::Entity)player, rt::components::Controller{});
+    _spWorld->emplace<rt::components::Player>((rt::ecs::Entity)player, rt::components::Player{});
+    _spWorld->emplace<rt::components::Size>((rt::ecs::Entity)player, rt::components::Size{24.f, 16.f});
     _spPlayer = player;
 
     // Reset score at the start of a singleplayer run
@@ -129,6 +129,7 @@ void Screens::initSingleplayerWorld() {
     // Start with an initial simple line
     _spEnemies.clear();
     _spBullets.clear();
+    _spEnemyBullets.clear();
     _spShootCooldown = 0.f;
     _spElapsed = 0.f;
     _spSpawnTimer = 0.f;
@@ -164,6 +165,7 @@ void Screens::shutdownSingleplayerWorld() {
     _spPlayer = 0;
     _spEnemies.clear();
     _spBullets.clear();
+    _spEnemyBullets.clear();
     _spInitialized = false;
     _singleplayerActive = false;
     _spPaused = false;
@@ -225,7 +227,7 @@ void Screens::updateSingleplayerWorld(float dt) {
         if (auto* pp = _spWorld->get<rt::components::Position>(_spPlayer)) {
             float bx = pp->x + 24.f; // from player front
             float by = pp->y + 6.f;  // roughly center
-            _spBullets.push_back({_spBulletW > 0 ? bx : bx, by, _spBulletSpeed, 0.f, _spBulletW, _spBulletH});
+            _spBullets.push_back({bx, by, _spBulletSpeed, 0.f, _spBulletW, _spBulletH});
             _spShootCooldown = _spShootInterval;
         }
     }
@@ -288,6 +290,42 @@ void Screens::updateSingleplayerWorld(float dt) {
         else { ++it; }
     }
 
+    // Enemy shooting: enemies with shooter=true fire towards the player with some inaccuracy
+    if (!_gameOver) {
+        // Player center
+        float px = 0.f, py = 0.f;
+        if (auto* pp = _spWorld->get<rt::components::Position>(_spPlayer)) { px = pp->x + 12.f; py = pp->y + 8.f; }
+        for (auto& en : _spEnemies) {
+            if (!en.shooter) continue;
+            en.shootCooldown -= dt;
+            if (en.shootCooldown > 0.f) continue;
+            if (auto* ep = _spWorld->get<rt::components::Position>(en.id)) {
+                // direction to player
+                float ex = ep->x + 12.f;
+                float ey = ep->y + 8.f;
+                float dx = px - ex;
+                float dy = py - ey;
+                float len = std::sqrt(dx*dx + dy*dy);
+                if (len < 1e-3f) { dx = -1.f; dy = 0.f; len = 1.f; }
+                dx /= len; dy /= len;
+                // inaccuracy
+                float acc = std::clamp(en.accuracy, 0.5f, 0.8f);
+                float maxAngle = (1.f - acc) * 0.5f;
+                std::uniform_real_distribution<float> ang(-maxAngle, maxAngle);
+                float a = ang(_spRng);
+                float cs = std::cos(a), sn = std::sin(a);
+                float dirx = dx * cs - dy * sn;
+                float diry = dx * sn + dy * cs;
+                float vx = dirx * en.bulletSpeed;
+                float vy = diry * en.bulletSpeed;
+                float bx = ep->x - 6.f;
+                float by = ep->y + 6.f;
+                _spEnemyBullets.push_back({bx, by, vx, vy, 6.f, 3.f});
+                en.shootCooldown += en.shootInterval;
+            }
+        }
+    }
+
     if (_spBossActive && _spBossId != 0) {
         auto* pos = _spWorld->get<rt::components::Position>(_spBossId);
         auto* ai = _spWorld->get<rt::components::AiController>(_spBossId);
@@ -310,6 +348,8 @@ void Screens::updateSingleplayerWorld(float dt) {
                         _spBossAtStop = true;
                         if (pos->y < minY) pos->y = minY;
                         if (pos->y > maxY) pos->y = maxY;
+                        // reset boss shooting when it reaches stop
+                        _spBossShootCooldown = 0.4f;
                     }
                 }
                 if (_spBossAtStop) {
@@ -319,6 +359,33 @@ void Screens::updateSingleplayerWorld(float dt) {
                     } else {
                         b |= kUp;
                         if (pos->y <= minY) _spBossDirDown = true;
+                    }
+                    // Boss shooting: fire a fan toward the player at intervals
+                    _spBossShootCooldown -= dt;
+                    if (_spBossShootCooldown <= 0.f) {
+                        float px = 0.f, py = 0.f;
+                        if (auto* pp = _spWorld->get<rt::components::Position>(_spPlayer)) { px = pp->x + 12.f; py = pp->y + 8.f; }
+                        float bx = pos->x;
+                        float by = pos->y + _spBossH * 0.5f;
+                        float dx = px - bx;
+                        float dy = py - by;
+                        float len = std::sqrt(dx*dx + dy*dy);
+                        if (len < 1e-3f) { dx = -1.f; dy = 0.f; len = 1.f; }
+                        dx /= len; dy /= len;
+                        int n = std::max(1, _spBossBurstCount);
+                        for (int i = 0; i < n; ++i) {
+                            float tnorm = (n == 1) ? 0.f : (float)i / (float)(n - 1);
+                            float angle = (tnorm - 0.5f) * 2.f * _spBossSpread;
+                            float cs = std::cos(angle), sn = std::sin(angle);
+                            float dirx = dx * cs - dy * sn;
+                            float diry = dx * sn + dy * cs;
+                            float vx = dirx * _spBossBulletSpeed;
+                            float vy = diry * _spBossBulletSpeed;
+                            float sx = pos->x - 8.f;
+                            float sy = by - 2.f;
+                            _spEnemyBullets.push_back({sx, sy, vx, vy, 8.f, 4.f});
+                        }
+                        _spBossShootCooldown += _spBossShootInterval;
                     }
                 }
             }
@@ -381,6 +448,40 @@ void Screens::updateSingleplayerWorld(float dt) {
         }
         if (destroyBullet) _spBullets.erase(_spBullets.begin() + (long)i);
         else ++i;
+    }
+
+    // Enemy bullets: move, despawn, and collide with player
+    if (!_gameOver) {
+        int screenH = GetScreenHeight();
+        for (std::size_t i = 0; i < _spEnemyBullets.size(); ) {
+            auto& b = _spEnemyBullets[i];
+            b.x += b.vx * dt;
+            b.y += b.vy * dt;
+            bool destroyBullet = false;
+            // Offscreen
+            if (b.x + b.w < -40.f || b.x > screenW + 60.f || b.y + b.h < -40.f || b.y > screenH + 60.f) destroyBullet = true;
+            // Collide with player
+            if (!destroyBullet) {
+                if (auto* pp = _spWorld->get<rt::components::Position>(_spPlayer)) {
+                    float px = pp->x, py = pp->y, pw = 24.f, ph = 16.f;
+                    // expand pw/ph if Size component set
+                    if (auto* sz = _spWorld->get<rt::components::Size>(_spPlayer)) { pw = sz->w; ph = sz->h; }
+                    float bx1 = b.x, by1 = b.y, bx2 = b.x + b.w, by2 = b.y + b.h;
+                    float px2 = px + pw, py2 = py + ph;
+                    bool hit = !(bx2 < px || px2 < bx1 || by2 < py || py2 < by1);
+                    if (hit) {
+                        // If shield or i-frames, ignore life loss but still remove the bullet
+                        if (_spInvincibleTimer <= 0.f && _spHitIframes <= 0.f && _playerLives > 0) {
+                            _playerLives = std::max(0, _playerLives - 1);
+                            _spHitIframes = _spHitIframesDuration;
+                        }
+                        destroyBullet = true;
+                    }
+                }
+            }
+            if (destroyBullet) _spEnemyBullets.erase(_spEnemyBullets.begin() + (long)i);
+            else ++i;
+        }
     }
 
     // Move power-ups and handle pickup/offscreen
@@ -460,6 +561,11 @@ void Screens::drawSingleplayerWorld() {
     for (auto& b : _spBullets) {
         Rectangle rect{b.x, b.y, b.w, b.h};
         DrawRectangleRec(rect, (Color){240, 220, 80, 255});
+    }
+    // draw enemy bullets as orange rectangles
+    for (auto& b : _spEnemyBullets) {
+        Rectangle rect{b.x, b.y, b.w, b.h};
+        DrawRectangleRec(rect, (Color){255, 170, 0, 255});
     }
     // draw power-ups (delegated)
     spDrawPowerups();
@@ -635,33 +741,52 @@ void Screens::spScheduleNextSpawn() {
 void Screens::spSpawnLine(int count, float y) {
     float startX = (float)GetScreenWidth() + 40.f;
     float spacing = 40.f;
+    std::uniform_int_distribution<int> chance(0, 99);
     for (int i = 0; i < count; ++i) {
         auto e = _spWorld->create();
         float x = startX + i * spacing;
-    _spWorld->emplace<rt::components::Position>((rt::ecs::Entity)e, rt::components::Position{x, y});
+        _spWorld->emplace<rt::components::Position>((rt::ecs::Entity)e, rt::components::Position{x, y});
         _spWorld->emplace<rt::components::Enemy>((rt::ecs::Entity)e, rt::components::Enemy{});
         _spWorld->emplace<rt::components::AiController>((rt::ecs::Entity)e, rt::components::AiController{});
-    _spWorld->emplace<rt::components::Size>((rt::ecs::Entity)e, rt::components::Size{24.f, 16.f});
-        _spEnemies.push_back({e, SpFormationKind::Line, i, y, spacing, 0.f, 0.f, _spElapsed, (float)i * spacing, 0.f});
+        _spWorld->emplace<rt::components::Size>((rt::ecs::Entity)e, rt::components::Size{24.f, 16.f});
+        SpEnemy info{e, SpFormationKind::Line, i, y, spacing, 0.f, 0.f, _spElapsed, (float)i * spacing, 0.f};
+        if (chance(_spRng) < _spShooterPercent) {
+            info.shooter = true;
+            info.shootInterval = 1.2f; // similar to server normal difficulty
+            info.bulletSpeed = 240.f;
+            info.accuracy = 0.62f;
+            info.shootCooldown = 0.2f * (float)i; // slight staggering
+        }
+        _spEnemies.push_back(info);
     }
 }
 
 void Screens::spSpawnSnake(int count, float y, float amplitude, float frequency, float spacing) {
     float startX = (float)GetScreenWidth() + 40.f;
+    std::uniform_int_distribution<int> chance(0, 99);
     for (int i = 0; i < count; ++i) {
         auto e = _spWorld->create();
         float x = startX + i * spacing;
-    _spWorld->emplace<rt::components::Position>((rt::ecs::Entity)e, rt::components::Position{x, y});
+        _spWorld->emplace<rt::components::Position>((rt::ecs::Entity)e, rt::components::Position{x, y});
         _spWorld->emplace<rt::components::Enemy>((rt::ecs::Entity)e, rt::components::Enemy{});
         _spWorld->emplace<rt::components::AiController>((rt::ecs::Entity)e, rt::components::AiController{});
-    _spWorld->emplace<rt::components::Size>((rt::ecs::Entity)e, rt::components::Size{24.f, 16.f});
-        _spEnemies.push_back({e, SpFormationKind::Snake, i, y, spacing, amplitude, frequency, _spElapsed, (float)i * spacing, 0.f});
+        _spWorld->emplace<rt::components::Size>((rt::ecs::Entity)e, rt::components::Size{24.f, 16.f});
+        SpEnemy info{e, SpFormationKind::Snake, i, y, spacing, amplitude, frequency, _spElapsed, (float)i * spacing, 0.f};
+        if (chance(_spRng) < _spShooterPercent) {
+            info.shooter = true;
+            info.shootInterval = 1.2f;
+            info.bulletSpeed = 240.f;
+            info.accuracy = 0.65f;
+            info.shootCooldown = 0.15f * (float)i;
+        }
+        _spEnemies.push_back(info);
     }
 }
 
 void Screens::spSpawnTriangle(int rows, float y, float spacing) {
     float startX = (float)GetScreenWidth() + 40.f;
     int idx = 0;
+    std::uniform_int_distribution<int> chance(0, 99);
     for (int col = 0; col < rows; ++col) {
         int count = col + 1; // 1,2,3,...
         float localX = col * spacing;
@@ -673,7 +798,15 @@ void Screens::spSpawnTriangle(int rows, float y, float spacing) {
             _spWorld->emplace<rt::components::Enemy>((rt::ecs::Entity)e, rt::components::Enemy{});
             _spWorld->emplace<rt::components::AiController>((rt::ecs::Entity)e, rt::components::AiController{});
             _spWorld->emplace<rt::components::Size>((rt::ecs::Entity)e, rt::components::Size{24.f, 16.f});
-            _spEnemies.push_back({e, SpFormationKind::Triangle, idx++, y, spacing, 0.f, 0.f, _spElapsed, localX, localY});
+            SpEnemy info{e, SpFormationKind::Triangle, idx++, y, spacing, 0.f, 0.f, _spElapsed, localX, localY};
+            if (chance(_spRng) < _spShooterPercent) {
+                info.shooter = true;
+                info.shootInterval = 1.3f;
+                info.bulletSpeed = 220.f;
+                info.accuracy = 0.60f;
+                info.shootCooldown = 0.1f * (float)idx;
+            }
+            _spEnemies.push_back(info);
         }
     }
 }
@@ -682,6 +815,7 @@ void Screens::spSpawnDiamond(int rows, float y, float spacing) {
     // Diamond shape: columns increase then decrease
     float startX = (float)GetScreenWidth() + 40.f;
     int idx = 0;
+    std::uniform_int_distribution<int> chance(0, 99);
     for (int col = 0; col < rows; ++col) {
         int count = col + 1;
         float localX = col * spacing;
@@ -693,7 +827,15 @@ void Screens::spSpawnDiamond(int rows, float y, float spacing) {
             _spWorld->emplace<rt::components::Enemy>((rt::ecs::Entity)e, rt::components::Enemy{});
             _spWorld->emplace<rt::components::AiController>((rt::ecs::Entity)e, rt::components::AiController{});
             _spWorld->emplace<rt::components::Size>((rt::ecs::Entity)e, rt::components::Size{24.f, 16.f});
-            _spEnemies.push_back({e, SpFormationKind::Diamond, idx++, y, spacing, 0.f, 0.f, _spElapsed, localX, localY});
+            SpEnemy info{e, SpFormationKind::Diamond, idx++, y, spacing, 0.f, 0.f, _spElapsed, localX, localY};
+            if (chance(_spRng) < _spShooterPercent) {
+                info.shooter = true;
+                info.shootInterval = 1.3f;
+                info.bulletSpeed = 220.f;
+                info.accuracy = 0.60f;
+                info.shootCooldown = 0.1f * (float)idx;
+            }
+            _spEnemies.push_back(info);
         }
     }
     for (int col = rows - 2; col >= 0; --col) {
@@ -707,7 +849,15 @@ void Screens::spSpawnDiamond(int rows, float y, float spacing) {
             _spWorld->emplace<rt::components::Enemy>((rt::ecs::Entity)e, rt::components::Enemy{});
             _spWorld->emplace<rt::components::AiController>((rt::ecs::Entity)e, rt::components::AiController{});
             _spWorld->emplace<rt::components::Size>((rt::ecs::Entity)e, rt::components::Size{24.f, 16.f});
-            _spEnemies.push_back({e, SpFormationKind::Diamond, idx++, y, spacing, 0.f, 0.f, _spElapsed, localX, localY});
+            SpEnemy info{e, SpFormationKind::Diamond, idx++, y, spacing, 0.f, 0.f, _spElapsed, localX, localY};
+            if (chance(_spRng) < _spShooterPercent) {
+                info.shooter = true;
+                info.shootInterval = 1.3f;
+                info.bulletSpeed = 220.f;
+                info.accuracy = 0.60f;
+                info.shootCooldown = 0.1f * (float)idx;
+            }
+            _spEnemies.push_back(info);
         }
     }
 }

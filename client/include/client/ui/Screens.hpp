@@ -111,10 +111,18 @@ private:
         float spawnTime{0.f};    // time when spawned (for animation phase)
         float localX{0.f};       // initial local X within formation
         float localY{0.f};       // initial local Y within formation
+        // Shooting capability (subset of enemies get this enabled)
+        bool shooter{false};
+        float shootCooldown{0.f};
+        float shootInterval{1.2f};
+        float bulletSpeed{220.f};
+        float accuracy{0.62f};   // 0.5..0.8 (higher = better aim)
     };
     std::vector<SpEnemy> _spEnemies;
     struct SpBullet { float x; float y; float vx; float vy; float w; float h; };
     std::vector<SpBullet> _spBullets;
+    // Enemy bullets (orange) fired by shooters
+    std::vector<SpBullet> _spEnemyBullets;
     float _spElapsed = 0.f;
     float _spSpawnTimer = 0.f;
     int _spNextFormation = 0;
@@ -130,6 +138,8 @@ private:
     float _spBulletSpeed = 420.f;
     float _spBulletW = 8.f;
     float _spBulletH = 3.f;
+    // Enemy shooter tuning (percentage of enemies that shoot)
+    int _spShooterPercent = 15; // 0..100
     // Player hit cooldown (i-frames)
     float _spHitIframes = 1.f;      // seconds left of invincibility
     float _spHitIframesDuration = 1.0f;
@@ -173,6 +183,12 @@ private:
     bool _spBossAtStop = false;        // has reached its stop X position
     bool _spBossDirDown = true;        // vertical patrol direction
     float _spBossSpeedY = 100.f;       // effective speed is governed by Ai bits; value used for tuning if needed
+    // Boss shooting state (singleplayer)
+    float _spBossShootCooldown = 0.f;  // time until next volley
+    float _spBossShootInterval = 1.1f; // seconds between volleys
+    float _spBossBulletSpeed = 280.f;  // bullet speed in px/s
+    int   _spBossBurstCount = 5;       // number of bullets per volley (fan)
+    float _spBossSpread = 0.30f;       // half-angle spread in radians (~17deg)
 
     // Check if required sprite assets are available on disk
     bool assetsAvailable() const;
