@@ -12,6 +12,7 @@
 #include <chrono>
 #include <string>
 #include "common/Protocol.hpp"
+#include <unordered_set>
 using namespace client::ui;
 
 namespace {
@@ -36,6 +37,8 @@ void Screens::leaveSession() {
     teardownNet();
     _connected = false;
     _entities.clear();
+    _entityById.clear();
+    _missedById.clear();
     _serverReturnToMenu = false;
     // Stop local singleplayer sandbox if running
     shutdownSingleplayerWorld();
@@ -339,6 +342,11 @@ void Screens::ensureNetSetup() {
         g.sock = std::make_unique<asio::ip::udp::socket>(*g.io);
         g.sock->open(asio::ip::udp::v4());
         g.sock->non_blocking(true);
+        // Increase receive buffer to 1 MB to avoid drops during bursts
+        try {
+            asio::socket_base::receive_buffer_size opt(1024 * 1024);
+            g.sock->set_option(opt);
+        } catch (...) {}
 
         asio::ip::udp::resolver res(*g.io);
         g.server = *res.resolve(asio::ip::udp::v4(), _serverAddr, _serverPort).begin();
@@ -411,6 +419,8 @@ void Screens::teardownNet() {
 
     g.io.reset();
     _entities.clear();
+    _entityById.clear();
+    _missedById.clear();
     _serverReturnToMenu = false;
 }
 
@@ -452,17 +462,75 @@ void Screens::handleNetPacket(const char* data, std::size_t n) {
         p += sizeof(rtype::net::StateHeader);
         std::size_t count = sh->count;
         if (n < sizeof(rtype::net::Header) + sizeof(rtype::net::StateHeader) + count * sizeof(rtype::net::PackedEntity)) return;
-        _entities.clear();
-        _entities.reserve(count);
+        // Reconciliation: update or insert all received entities; mark as seen
         auto* arr = reinterpret_cast<const rtype::net::PackedEntity*>(p);
+        std::unordered_set<unsigned> seenIds;
+        seenIds.reserve(count);
+        double nowSec = GetTime();
         for (std::size_t i = 0; i < count; ++i) {
             PackedEntity e{};
             e.id = arr[i].id;
             e.type = static_cast<unsigned char>(arr[i].type);
             e.x = arr[i].x; e.y = arr[i].y; e.vx = arr[i].vx; e.vy = arr[i].vy;
             e.rgba = arr[i].rgba;
-            _entities.push_back(e);
+            _entityById[e.id] = e;
+            _missedById[e.id] = 0;
+            _lastSeenAt[e.id] = nowSec;
+            seenIds.insert(e.id);
         }
+        // Increment miss counters for any id not seen in this snapshot
+        std::vector<unsigned> toErase;
+        toErase.reserve(_entityById.size());
+        for (const auto& kv : _entityById) {
+            unsigned id = kv.first;
+            if (seenIds.find(id) == seenIds.end()) {
+                int missed = (_missedById.count(id) ? _missedById[id] : 0) + 1;
+                _missedById[id] = missed;
+                double lastSeen = (_lastSeenAt.count(id) ? _lastSeenAt[id] : nowSec);
+                double elapsed = nowSec - lastSeen;
+                unsigned char type = kv.second.type;
+                double ttl = (type == 2 /* Enemy */) ? _expireSecondsEnemy : _expireSecondsDefault;
+                if (missed >= _missThreshold && elapsed >= ttl) toErase.push_back(id);
+            }
+        }
+        for (unsigned id : toErase) {
+            _entityById.erase(id);
+            _missedById.erase(id);
+            _lastSeenAt.erase(id);
+        }
+        // Rebuild render list with a stable ordering: players, bullets, powerups, enemies
+        _entities.clear();
+        _entities.reserve(_entityById.size());
+        auto appendByType = [&](unsigned char type) {
+            for (const auto& kv : _entityById) {
+                if (kv.second.type == type) _entities.push_back(kv.second);
+            }
+        };
+        appendByType(1); // Player
+        appendByType(3); // Bullet
+        appendByType(4); // Powerup (if used)
+        appendByType(2); // Enemy
+    } else if (h->type == rtype::net::MsgType::Despawn) {
+        // Server explicitly told us to remove an entity - do it immediately
+        const char* p = data + sizeof(rtype::net::Header);
+        if (n < sizeof(rtype::net::Header) + sizeof(std::uint32_t)) return;
+        std::uint32_t entityId;
+        std::memcpy(&entityId, p, sizeof(entityId));
+        _entityById.erase(entityId);
+        _missedById.erase(entityId);
+        _lastSeenAt.erase(entityId);
+        // Rebuild render list immediately
+        _entities.clear();
+        _entities.reserve(_entityById.size());
+        auto appendByType = [&](unsigned char type) {
+            for (const auto& kv : _entityById) {
+                if (kv.second.type == type) _entities.push_back(kv.second);
+            }
+        };
+        appendByType(1); // Player
+        appendByType(3); // Bullet
+        appendByType(4); // Powerup
+        appendByType(2); // Enemy
     } else if (h->type == rtype::net::MsgType::Roster) {
         const char* p = data + sizeof(rtype::net::Header);
         if (n < sizeof(rtype::net::Header) + sizeof(rtype::net::RosterHeader)) return;
@@ -635,13 +703,14 @@ void Screens::drawGameplay(ScreenState& screen) {
     for (const auto& ent : _entities) {
         if (ent.type == 1 && ent.id == _selfId) { self = &ent; break; }
     }
-    // Build input bits with edge gating
+    // Build input bits with edge gating (disabled when dead)
     std::uint8_t bits = 0;
-    bool wantLeft  = IsKeyDown(KEY_LEFT);
-    bool wantRight = IsKeyDown(KEY_RIGHT);
-    bool wantUp    = IsKeyDown(KEY_UP);
-    bool wantDown  = IsKeyDown(KEY_DOWN);
-    bool wantShoot = IsKeyDown(KEY_SPACE);
+    bool isAlive = (_playerLives > 0) && !_gameOver;
+    bool wantLeft  = isAlive && IsKeyDown(KEY_LEFT);
+    bool wantRight = isAlive && IsKeyDown(KEY_RIGHT);
+    bool wantUp    = isAlive && IsKeyDown(KEY_UP);
+    bool wantDown  = isAlive && IsKeyDown(KEY_DOWN);
+    bool wantShoot = isAlive && IsKeyDown(KEY_SPACE);
     if (self) {
         // Estimate drawn size for the player sprite
         const float playerScale = 1.18f;
@@ -666,16 +735,16 @@ void Screens::drawGameplay(ScreenState& screen) {
         if (wantDown)  bits |= rtype::net::InputDown;
     }
     // Toggle shot mode on Ctrl press (once)
-    if (IsKeyPressed(KEY_LEFT_CONTROL) || IsKeyPressed(KEY_RIGHT_CONTROL)) {
+    if (isAlive && (IsKeyPressed(KEY_LEFT_CONTROL) || IsKeyPressed(KEY_RIGHT_CONTROL))) {
         _shotMode = (_shotMode == ShotMode::Normal) ? ShotMode::Charge : ShotMode::Normal;
     }
     // Charge beam handling: hold Space when in Charge mode (Alt no longer required)
     bool altDown = false;
-    bool chargeHeld = (_shotMode == ShotMode::Charge) && IsKeyDown(KEY_SPACE);
+    bool chargeHeld = isAlive && (_shotMode == ShotMode::Charge) && IsKeyDown(KEY_SPACE);
     if (chargeHeld) {
         if (!_isCharging) { _isCharging = true; _chargeStart = GetTime(); }
     } else {
-        if (_isCharging && IsKeyReleased(KEY_SPACE)) {
+        if (isAlive && _isCharging && IsKeyReleased(KEY_SPACE)) {
             // Fire beam
             double chargeDur = std::min(2.0, std::max(0.1, GetTime() - _chargeStart));
             _beamActive = true;
@@ -691,9 +760,9 @@ void Screens::drawGameplay(ScreenState& screen) {
         _isCharging = false;
     }
     // Normal shoot bit only when not charging
-    if (wantShoot && _shotMode == ShotMode::Normal) bits |= rtype::net::InputShoot;
+    if (isAlive && wantShoot && _shotMode == ShotMode::Normal) bits |= rtype::net::InputShoot;
     // Send charge bit to engine so server handles charge logic when shot mode is Charge
-    if (chargeHeld) bits |= rtype::net::InputCharge;
+    if (isAlive && chargeHeld) bits |= rtype::net::InputCharge;
 
     double now = GetTime();
     if (now - _lastSend > 1.0/30.0) {
@@ -784,6 +853,10 @@ void Screens::drawGameplay(ScreenState& screen) {
         auto& e = _entities[i];
         Color c = {(unsigned char)((e.rgba>>24)&0xFF),(unsigned char)((e.rgba>>16)&0xFF),(unsigned char)((e.rgba>>8)&0xFF),(unsigned char)(e.rgba&0xFF)};
         if (e.type == 1) { // Player (on applique les contraintes)
+            // Hide self ship if dead
+            if (e.id == _selfId && _playerLives <= 0) {
+                continue;
+            }
             // Taille du vaisseau pour le fallback rect
             int shipW = 20, shipH = 12;
             // Clamp to full window vertically and horizontally
@@ -871,8 +944,22 @@ void Screens::drawGameplay(ScreenState& screen) {
         }
     }
 
-    // Game Over overlay and input to return to menu
-    if (_gameOver) {
+    // Detect if all players are dead -> go to dedicated Game Over screen
+    bool everyoneDead = (_playerLives <= 0);
+    if (everyoneDead) {
+        for (const auto& op : _otherPlayers) { if (op.lives > 0) { everyoneDead = false; break; } }
+    }
+    if (everyoneDead) {
+        leaveSession();
+        _connected = false;
+        _entities.clear();
+        _gameOver = true;
+        screen = ScreenState::GameOver;
+        return;
+    }
+
+    // Game Over overlay and input to return to menu (self dead but others alive)
+    if (_gameOver && !everyoneDead) {
         DrawRectangle(0, 0, w, h, (Color){0, 0, 0, 180});
         titleCentered("GAME OVER", (int)(h * 0.40f), (int)(h * 0.10f), RED);
         std::string finalScore = "Score: " + std::to_string(_score);
@@ -886,5 +973,23 @@ void Screens::drawGameplay(ScreenState& screen) {
             screen = ScreenState::Menu;
             return;
         }
+    }
+}
+
+void Screens::drawGameOver(ScreenState& screen) {
+    int w = GetScreenWidth();
+    int h = GetScreenHeight();
+    int baseFont = baseFontFromHeight(h);
+    DrawRectangle(0, 0, w, h, (Color){0, 0, 0, 200});
+    titleCentered("ALL PLAYERS ARE DEAD", (int)(h * 0.32f), (int)(h * 0.10f), RED);
+    std::string total = std::string("Total Score: ") + std::to_string(_score);
+    titleCentered(total.c_str(), (int)(h * 0.48f), (int)(h * 0.07f), RAYWHITE);
+    int btnWidth = (int)(w * 0.24f);
+    int btnHeight = (int)(h * 0.09f);
+    int x = (w - btnWidth) / 2;
+    int y = (int)(h * 0.65f);
+    if (button({(float)x, (float)y, (float)btnWidth, (float)btnHeight}, "Back to Menu", baseFont, BLACK, LIGHTGRAY, GRAY)) {
+        screen = ScreenState::Menu;
+        _gameOver = false;
     }
 }

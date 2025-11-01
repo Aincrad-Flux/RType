@@ -34,6 +34,7 @@ enum class ScreenState {
     Multiplayer,
     Waiting,
     Gameplay,
+    GameOver,
     Options,
     Leaderboard,
     NotEnoughPlayers,
@@ -59,6 +60,7 @@ public:
     bool autoConnect(ScreenState& screen, MultiplayerForm& form);
     void drawWaiting(ScreenState& screen);
     void drawGameplay(ScreenState& screen);
+    void drawGameOver(ScreenState& screen);
     void drawOptions();
     void drawLeaderboard();
     void drawNotEnoughPlayers(ScreenState& screen);
@@ -92,6 +94,8 @@ private:
     void spSpawnTriangle(int rows, float y, float spacing);
     void spSpawnDiamond(int rows, float y, float spacing);
     void spScheduleNextSpawn();
+    // Boss helper
+    void spSpawnBoss();
     bool _singleplayerActive = false;
     bool _spPaused = false;
     std::unique_ptr<rt::ecs::Registry> _spWorld;
@@ -154,6 +158,24 @@ private:
     // We keep systems owned by the world; stored here for clarity
     bool _spInitialized = false;
 
+    // Boss state (spawns once when reaching a score threshold, moves in from right then holds at right side)
+    bool _spBossActive = false;
+    bool _spBossSpawned = false;
+    // Next score threshold at which to spawn a boss (recurs every 15000 points)
+    int _spBossThreshold = 15000;
+    rt::ecs::Entity _spBossId = 0;
+    float _spBossW = 160.f;            // larger boss size
+    float _spBossH = 120.f;
+    float _spBossStopX = 0.f;          // x at which boss stops moving left
+    float _spBossRightMargin = 20.f;   // margin from right edge when stopped
+    // Boss combat state
+    int _spBossHpMax = 50;
+    int _spBossHp = 0;
+    // Boss vertical movement state
+    bool _spBossAtStop = false;        // has reached its stop X position
+    bool _spBossDirDown = true;        // vertical patrol direction
+    float _spBossSpeedY = 100.f;       // effective speed is governed by Ai bits; value used for tuning if needed
+
     // Check if required sprite assets are available on disk
     bool assetsAvailable() const;
     // Parse a single UDP datagram payload according to our protocol and update local state
@@ -183,6 +205,13 @@ private:
     bool waitHelloAck(double timeoutSec);
     struct PackedEntity { unsigned id; unsigned char type; float x; float y; float vx; float vy; unsigned rgba; };
     std::vector<PackedEntity> _entities;
+    // Entity reconciliation buffers: avoid dropping entities on transient packet loss or truncation
+    std::unordered_map<unsigned, PackedEntity> _entityById; // id -> last known entity state
+    std::unordered_map<unsigned, int> _missedById;          // id -> consecutive snapshots missed
+    std::unordered_map<unsigned, double> _lastSeenAt;       // id -> last time seen in a snapshot (seconds)
+    int _missThreshold = 3;                                 // safeguard: remove only if both miss-count and time exceed
+    double _expireSecondsEnemy = 2.0;                       // enemies expire after not seen for this time
+    double _expireSecondsDefault = 1.0;                     // players/bullets/powerups
     double _lastSend = 0.0;
     bool _serverReturnToMenu = false;
     // --- spritesheet handling ---

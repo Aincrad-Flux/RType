@@ -85,11 +85,13 @@ class FormationSpawnSystem : public rt::ecs::System {
     std::mt19937& rng_;
     float timer_ = 0.f;
     float* t_;
-  // difficulty knobs
-  std::uint8_t difficulty_ = 1; // 0..2
-  float baseInterval_ = 3.0f;
-  float countMultiplier_ = 1.0f;
-  std::uint8_t shooterPercent_ = 20; // 0..100 - percentage of enemies that shoot
+    // When a boss is active we suppress regular waves; resume instantly afterwards
+    bool blockedByBoss_ = false;
+    // difficulty knobs
+    std::uint8_t difficulty_ = 1; // 0..2
+    float baseInterval_ = 3.0f;
+    float countMultiplier_ = 1.0f;
+    std::uint8_t shooterPercent_ = 20; // 0..100 - percentage of enemies that shoot
     // Internal helpers to create formations
     rt::ecs::Entity spawnSnake(rt::ecs::Registry& r, float y, int count);
     rt::ecs::Entity spawnLine(rt::ecs::Registry& r, float y, int count);
@@ -123,6 +125,25 @@ class InfiniteFireSystem : public rt::ecs::System {
 };
 
 class CollisionSystem : public rt::ecs::System {
+  public:
+    void update(rt::ecs::Registry& r, float dt) override;
+};
+
+// Spawns the boss every time any player's score crosses a multiple of `threshold_`; prevents other spawns while active
+class BossSpawnSystem : public rt::ecs::System {
+  public:
+    explicit BossSpawnSystem(int threshold = 15000) : threshold_(threshold) {}
+    void update(rt::ecs::Registry& r, float dt) override;
+  private:
+    int threshold_ = 15000;
+    // Number of bosses spawned so far (for threshold multiples)
+    int bossesSpawned_ = 0;
+    // Track if a boss is currently alive to avoid double spawns in the same frame
+    bool bossActive_ = false;
+};
+
+// Controls the boss movement (slide in from right, then bounce vertically) and clamps it in world
+class BossSystem : public rt::ecs::System {
   public:
     void update(rt::ecs::Registry& r, float dt) override;
 };

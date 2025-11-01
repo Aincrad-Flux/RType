@@ -370,6 +370,20 @@ rt::ecs::Entity FormationSpawnSystem::spawnBigShooters(rt::ecs::Registry& r, flo
 }
 
 void FormationSpawnSystem::update(rt::ecs::Registry& r, float dt) {
+    // Suppress regular waves while a boss is active
+    bool bossPresent = false;
+    for (auto& [e, _] : r.storage<BossTag>().data()) { (void)e; bossPresent = true; break; }
+    if (bossPresent) {
+        blockedByBoss_ = true;
+        return;
+    }
+    // If we were blocked by a boss and it just died, force immediate wave spawn
+    if (blockedByBoss_) {
+        blockedByBoss_ = false;
+        // prime timer so a wave is spawned right away this frame
+        timer_ = 3.0f;
+    }
+
     timer_ += dt;
     if (timer_ < baseInterval_) return;
     timer_ = 0.f;
@@ -492,18 +506,25 @@ void CollisionSystem::update(rt::ecs::Registry& r, float dt) {
         if (bt->faction == BulletFaction::Player) {
             // hit enemies
             for (auto& [e, _] : r.storage<EnemyTag>().data()) {
-                if (intersects(b, e)) {
-                    // award score to bullet owner if any
-                    if (auto* bo = r.get<BulletOwner>(b)) {
-                        if (auto* sc = r.get<Score>(bo->owner)) {
-                            sc->value += 50;
-                        }
-                    }
-                    // Beams persist through multiple hits in the same frame; regular bullets are destroyed on first hit
+                if (!intersects(b, e)) continue;
+                if (auto* boss = r.get<BossTag>(e)) {
+                    if (boss->hp > 0) boss->hp -= 1;
                     if (!isBeam) toDestroy.push_back(b);
-                    toDestroy.push_back(e);
-                    if (!isBeam) break; // stop after first hit for regular bullets
+                    if (boss->hp <= 0) {
+                        if (auto* bo = r.get<BulletOwner>(b)) if (auto* sc = r.get<Score>(bo->owner)) sc->value += 1000;
+                        toDestroy.push_back(e);
+                    }
+                    if (!isBeam) break;
+                    else continue;
                 }
+                if (auto* bo = r.get<BulletOwner>(b)) {
+                    if (auto* sc = r.get<Score>(bo->owner)) {
+                        sc->value += 50;
+                    }
+                }
+                if (!isBeam) toDestroy.push_back(b);
+                toDestroy.push_back(e);
+                if (!isBeam) break;
             }
         } else {
             // enemy bullets hit players
@@ -571,6 +592,92 @@ void InvincibilitySystem::update(rt::ecs::Registry& r, float dt) {
         inv.timeLeft -= dt;
         if (inv.timeLeft <= 0.f) {
             inv.timeLeft = 0.f;
+        }
+    }
+}
+
+void BossSpawnSystem::update(rt::ecs::Registry& r, float dt) {
+    (void)dt;
+    // Track whether a boss is currently present
+    bool anyBoss = false;
+    for (auto& [e, _] : r.storage<BossTag>().data()) { (void)e; anyBoss = true; break; }
+    bossActive_ = anyBoss;
+    if (anyBoss) return;
+
+    // No boss present: decide whether to spawn based on score threshold multiples
+    int bestScore = 0;
+    for (auto& [e, sc] : r.storage<Score>().data()) { (void)e; bestScore = std::max(bestScore, sc.value); }
+    if (threshold_ <= 0) return;
+    int shouldHaveSpawned = bestScore / threshold_;
+    if (shouldHaveSpawned <= bossesSpawned_) return; // not yet at next multiple
+
+    // Spawn a boss
+    constexpr float kWorldH = 600.f;
+    constexpr float kTopMargin = 56.f;
+    constexpr float kBottomMargin = 10.f;
+    float bw = 160.f;
+    float bh = 120.f;
+    float yMin = kTopMargin;
+    float yMax = kWorldH - kBottomMargin - bh;
+    if (yMax < yMin) yMax = yMin;
+    float by = 0.5f * (yMin + yMax);
+    auto e = r.create();
+    r.emplace<Transform>(e, Transform{980.f + 60.f, by});
+    r.emplace<Velocity>(e, Velocity{-60.f, 0.f});
+    r.emplace<Size>(e, Size{bw, bh});
+    r.emplace<ColorRGBA>(e, ColorRGBA{0x9646B4FFu});
+    r.emplace<NetType>(e, NetType{static_cast<rtype::net::EntityType>(2)});
+    r.emplace<EnemyTag>(e, EnemyTag{});
+    BossTag boss{};
+    boss.maxHp = 50;
+    boss.hp = boss.maxHp;
+    boss.rightMargin = 20.f;
+    float worldW = 960.f;
+    boss.stopX = worldW - boss.rightMargin - bw;
+    boss.atStop = false;
+    boss.dirDown = true;
+    boss.speedX = -60.f;
+    boss.speedY = 100.f;
+    r.emplace<BossTag>(e, boss);
+
+    bossesSpawned_ += 1;
+    bossActive_ = true;
+}
+
+void BossSystem::update(rt::ecs::Registry& r, float dt) {
+    constexpr float kWorldH = 600.f;
+    constexpr float kTopMargin = 56.f;
+    constexpr float kBottomMargin = 10.f;
+    for (auto& [e, boss] : r.storage<BossTag>().data()) {
+        auto* t = r.get<Transform>(e);
+        auto* v = r.get<Velocity>(e);
+        auto* s = r.get<Size>(e);
+        if (!t || !s) continue;
+        if (!v) { r.emplace<Velocity>(e, Velocity{0.f, 0.f}); v = r.get<Velocity>(e); }
+        float minY = kTopMargin;
+        float maxY = kWorldH - kBottomMargin - s->h;
+        if (!boss.atStop) {
+            if (t->x > boss.stopX) {
+                v->vx = boss.speedX;
+            } else {
+                t->x = boss.stopX;
+                v->vx = 0.f;
+                boss.atStop = true;
+            }
+            if (t->y < minY) t->y = minY;
+            if (t->y > maxY) t->y = maxY;
+            v->vy = 0.f;
+        } else {
+            v->vx = 0.f;
+            if (boss.dirDown) {
+                v->vy = std::abs(boss.speedY);
+                if (t->y >= maxY) boss.dirDown = false;
+            } else {
+                v->vy = -std::abs(boss.speedY);
+                if (t->y <= minY) boss.dirDown = true;
+            }
+            if (t->y < minY) t->y = minY;
+            if (t->y > maxY) t->y = maxY;
         }
     }
 }
