@@ -22,6 +22,17 @@ struct PlayerInput { std::uint8_t bits = 0; float speed = 150.f; };
 // Tags and gameplay data used by server
 struct EnemyTag {};
 
+struct BossTag {
+    int hp = 50;
+    int maxHp = 50;
+    float rightMargin = 20.f; // margin from right edge where boss stops
+    float stopX = 900.f;      // computed at spawn based on size/world width
+    bool atStop = false;      // reached stopX and started vertical patrol
+    bool dirDown = true;      // vertical patrol direction
+    float speedX = -60.f;     // approach speed from the right
+    float speedY = 100.f;     // vertical patrol speed
+};
+
 enum class BulletFaction : std::uint8_t { Player = 0, Enemy = 1 };
 struct BulletTag { BulletFaction faction = BulletFaction::Player; };
 struct BulletOwner { rt::ecs::Entity owner = 0; };

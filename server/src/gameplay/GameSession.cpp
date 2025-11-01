@@ -149,11 +149,11 @@ void GameSession::onUdpPacket(const asio::ip::udp::endpoint& from, const char* d
                     sc->value = 0;
                 }
 
-                // Give 30 seconds of invincibility at start
+                // Brief spawn invincibility at start
                 if (auto* inv = reg_.get<rt::game::Invincible>(pid)) {
-                    inv->timeLeft = 30.0f;
+                    inv->timeLeft = 1.0f;
                 } else {
-                    reg_.emplace<rt::game::Invincible>(pid, rt::game::Invincible{30.0f});
+                    reg_.emplace<rt::game::Invincible>(pid, rt::game::Invincible{1.0f});
                 }
 
                 playerIndex++;

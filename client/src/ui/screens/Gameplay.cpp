@@ -33,11 +33,12 @@ void Screens::drawGameplay(ScreenState& screen) {
     for (const auto& ent : _entities) { if (ent.type == 1 && ent.id == _selfId) { self = &ent; break; } }
 
     // Build input from arrows OR WASD, gate within playable area based on self pos
-    bool wantLeft  = IsKeyDown(KEY_LEFT)  || IsKeyDown(KEY_A);
-    bool wantRight = IsKeyDown(KEY_RIGHT) || IsKeyDown(KEY_D);
-    bool wantUp    = IsKeyDown(KEY_UP)    || IsKeyDown(KEY_W);
-    bool wantDown  = IsKeyDown(KEY_DOWN)  || IsKeyDown(KEY_S);
-    bool wantShoot = IsKeyDown(KEY_SPACE);
+    bool isAlive = (_playerLives > 0) && !_gameOver;
+    bool wantLeft  = isAlive && (IsKeyDown(KEY_LEFT)  || IsKeyDown(KEY_A));
+    bool wantRight = isAlive && (IsKeyDown(KEY_RIGHT) || IsKeyDown(KEY_D));
+    bool wantUp    = isAlive && (IsKeyDown(KEY_UP)    || IsKeyDown(KEY_W));
+    bool wantDown  = isAlive && (IsKeyDown(KEY_DOWN)  || IsKeyDown(KEY_S));
+    bool wantShoot = isAlive && IsKeyDown(KEY_SPACE);
     std::uint8_t bits = 0;
     // Assume player rect 24x16 like singleplayer for gating
     const float pW = 24.f, pH = 16.f;
@@ -64,7 +65,7 @@ void Screens::drawGameplay(ScreenState& screen) {
     if (_spHeat < 0.f) _spHeat = 0.f; if (_spHeat > 1.f) _spHeat = 1.f;
 
     // Only send shoot input if not overheated (to mimic singleplayer feel)
-    if (wantShoot && _spHeat > 0.f) bits |= rtype::net::InputShoot;
+    if (isAlive && wantShoot && _spHeat > 0.f) bits |= rtype::net::InputShoot;
 
     // Send inputs at ~30Hz
     double now = GetTime();
@@ -115,6 +116,9 @@ void Screens::drawGameplay(ScreenState& screen) {
         }
         if (e.type == 1) {
             // Player ship
+            if (e.id == _selfId && _playerLives <= 0) {
+                continue; // hide local ship if dead
+            }
             float x = e.x, y = e.y;
             if (y < playableMinY) y = (float)playableMinY;
             if (y + pH > playableMaxY) y = (float)(playableMaxY - pH);
@@ -148,7 +152,19 @@ void Screens::drawGameplay(ScreenState& screen) {
         }
     }
 
-    // Game over overlay, back to menu on ESC
+    // If everyone is dead, go to dedicated Game Over screen
+    bool everyoneDead = (_playerLives <= 0);
+    if (everyoneDead) { for (const auto& op : _otherPlayers) { if (op.lives > 0) { everyoneDead = false; break; } } }
+    if (everyoneDead) {
+        leaveSession();
+        _connected = false;
+        _entities.clear();
+        _gameOver = true;
+        screen = ScreenState::GameOver;
+        return;
+    }
+
+    // Game over overlay, back to menu on ESC (self dead but others alive)
     if (_gameOver) {
         DrawRectangle(0, 0, w, h, (Color){0, 0, 0, 180});
         titleCentered("Game Over", (int)(h * 0.40f), (int)(h * 0.10f), RAYWHITE);
