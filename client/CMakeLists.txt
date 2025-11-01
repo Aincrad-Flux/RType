@@ -14,6 +14,7 @@ add_executable(r-type_client
     src/ui/screens/Leaderboard.cpp
     src/ui/screens/NotEnoughPlayers.cpp
     src/ui/screens/Gameplay.cpp
+    src/ui/screens/GameOver.cpp
     # non-UI modules
     src/assets/Assets.cpp
     src/net/Net.cpp

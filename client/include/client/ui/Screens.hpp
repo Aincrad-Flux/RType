@@ -34,6 +34,7 @@ enum class ScreenState {
     Multiplayer,
     Waiting,
     Gameplay,
+    GameOver,
     Options,
     Leaderboard,
     NotEnoughPlayers,
@@ -59,6 +60,7 @@ public:
     bool autoConnect(ScreenState& screen, MultiplayerForm& form);
     void drawWaiting(ScreenState& screen);
     void drawGameplay(ScreenState& screen);
+    void drawGameOver(ScreenState& screen);
     void drawOptions();
     void drawLeaderboard();
     void drawNotEnoughPlayers(ScreenState& screen);

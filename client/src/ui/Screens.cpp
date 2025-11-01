@@ -635,13 +635,14 @@ void Screens::drawGameplay(ScreenState& screen) {
     for (const auto& ent : _entities) {
         if (ent.type == 1 && ent.id == _selfId) { self = &ent; break; }
     }
-    // Build input bits with edge gating
+    // Build input bits with edge gating (disabled when dead)
     std::uint8_t bits = 0;
-    bool wantLeft  = IsKeyDown(KEY_LEFT);
-    bool wantRight = IsKeyDown(KEY_RIGHT);
-    bool wantUp    = IsKeyDown(KEY_UP);
-    bool wantDown  = IsKeyDown(KEY_DOWN);
-    bool wantShoot = IsKeyDown(KEY_SPACE);
+    bool isAlive = (_playerLives > 0) && !_gameOver;
+    bool wantLeft  = isAlive && IsKeyDown(KEY_LEFT);
+    bool wantRight = isAlive && IsKeyDown(KEY_RIGHT);
+    bool wantUp    = isAlive && IsKeyDown(KEY_UP);
+    bool wantDown  = isAlive && IsKeyDown(KEY_DOWN);
+    bool wantShoot = isAlive && IsKeyDown(KEY_SPACE);
     if (self) {
         // Estimate drawn size for the player sprite
         const float playerScale = 1.18f;
@@ -666,16 +667,16 @@ void Screens::drawGameplay(ScreenState& screen) {
         if (wantDown)  bits |= rtype::net::InputDown;
     }
     // Toggle shot mode on Ctrl press (once)
-    if (IsKeyPressed(KEY_LEFT_CONTROL) || IsKeyPressed(KEY_RIGHT_CONTROL)) {
+    if (isAlive && (IsKeyPressed(KEY_LEFT_CONTROL) || IsKeyPressed(KEY_RIGHT_CONTROL))) {
         _shotMode = (_shotMode == ShotMode::Normal) ? ShotMode::Charge : ShotMode::Normal;
     }
     // Charge beam handling: hold Space when in Charge mode (Alt no longer required)
     bool altDown = false;
-    bool chargeHeld = (_shotMode == ShotMode::Charge) && IsKeyDown(KEY_SPACE);
+    bool chargeHeld = isAlive && (_shotMode == ShotMode::Charge) && IsKeyDown(KEY_SPACE);
     if (chargeHeld) {
         if (!_isCharging) { _isCharging = true; _chargeStart = GetTime(); }
     } else {
-        if (_isCharging && IsKeyReleased(KEY_SPACE)) {
+        if (isAlive && _isCharging && IsKeyReleased(KEY_SPACE)) {
             // Fire beam
             double chargeDur = std::min(2.0, std::max(0.1, GetTime() - _chargeStart));
             _beamActive = true;
@@ -691,9 +692,9 @@ void Screens::drawGameplay(ScreenState& screen) {
         _isCharging = false;
     }
     // Normal shoot bit only when not charging
-    if (wantShoot && _shotMode == ShotMode::Normal) bits |= rtype::net::InputShoot;
+    if (isAlive && wantShoot && _shotMode == ShotMode::Normal) bits |= rtype::net::InputShoot;
     // Send charge bit to engine so server handles charge logic when shot mode is Charge
-    if (chargeHeld) bits |= rtype::net::InputCharge;
+    if (isAlive && chargeHeld) bits |= rtype::net::InputCharge;
 
     double now = GetTime();
     if (now - _lastSend > 1.0/30.0) {
@@ -784,6 +785,10 @@ void Screens::drawGameplay(ScreenState& screen) {
         auto& e = _entities[i];
         Color c = {(unsigned char)((e.rgba>>24)&0xFF),(unsigned char)((e.rgba>>16)&0xFF),(unsigned char)((e.rgba>>8)&0xFF),(unsigned char)(e.rgba&0xFF)};
         if (e.type == 1) { // Player (on applique les contraintes)
+            // Hide self ship if dead
+            if (e.id == _selfId && _playerLives <= 0) {
+                continue;
+            }
             // Taille du vaisseau pour le fallback rect
             int shipW = 20, shipH = 12;
             // Clamp to full window vertically and horizontally
@@ -871,8 +876,22 @@ void Screens::drawGameplay(ScreenState& screen) {
         }
     }
 
-    // Game Over overlay and input to return to menu
-    if (_gameOver) {
+    // Detect if all players are dead -> go to dedicated Game Over screen
+    bool everyoneDead = (_playerLives <= 0);
+    if (everyoneDead) {
+        for (const auto& op : _otherPlayers) { if (op.lives > 0) { everyoneDead = false; break; } }
+    }
+    if (everyoneDead) {
+        leaveSession();
+        _connected = false;
+        _entities.clear();
+        _gameOver = true;
+        screen = ScreenState::GameOver;
+        return;
+    }
+
+    // Game Over overlay and input to return to menu (self dead but others alive)
+    if (_gameOver && !everyoneDead) {
         DrawRectangle(0, 0, w, h, (Color){0, 0, 0, 180});
         titleCentered("GAME OVER", (int)(h * 0.40f), (int)(h * 0.10f), RED);
         std::string finalScore = "Score: " + std::to_string(_score);
@@ -886,5 +905,23 @@ void Screens::drawGameplay(ScreenState& screen) {
             screen = ScreenState::Menu;
             return;
         }
+    }
+}
+
+void Screens::drawGameOver(ScreenState& screen) {
+    int w = GetScreenWidth();
+    int h = GetScreenHeight();
+    int baseFont = baseFontFromHeight(h);
+    DrawRectangle(0, 0, w, h, (Color){0, 0, 0, 200});
+    titleCentered("ALL PLAYERS ARE DEAD", (int)(h * 0.32f), (int)(h * 0.10f), RED);
+    std::string total = std::string("Total Score: ") + std::to_string(_score);
+    titleCentered(total.c_str(), (int)(h * 0.48f), (int)(h * 0.07f), RAYWHITE);
+    int btnWidth = (int)(w * 0.24f);
+    int btnHeight = (int)(h * 0.09f);
+    int x = (w - btnWidth) / 2;
+    int y = (int)(h * 0.65f);
+    if (button({(float)x, (float)y, (float)btnWidth, (float)btnHeight}, "Back to Menu", baseFont, BLACK, LIGHTGRAY, GRAY)) {
+        screen = ScreenState::Menu;
+        _gameOver = false;
     }
 }
