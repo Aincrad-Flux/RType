@@ -2,43 +2,43 @@
 
 ## Conan/CMake errors
 
-Symptôme: `conan_toolchain.cmake not found`.
-- Cause: l'étape Conan n'a pas été exécutée pour ce type de build (Release/Debug).
-- Correction: `conan install . -of=build -s build_type=Release --build=missing` (ou Debug),
-  puis `cmake --preset conan-release` et `cmake --build --preset conan-release`.
+Symptom: `conan_toolchain.cmake not found`.
+- Cause: the Conan step was not executed for this build type (Release/Debug).
+- Fix: `conan install . -of=build -s build_type=Release --build=missing` (or Debug),
+  then `cmake --preset conan-release` and `cmake --build --preset conan-release`.
 
-Symptôme: Échec d’installation de paquets systèmes.
-- Cause: permissions requises par le gestionnaire de paquets système.
-- Correction: relancez `conan install` avec les droits requis (éventuellement via `sudo`).
+Symptom: System package installation failure.
+- Cause: permissions required by the system package manager.
+- Fix: re-run `conan install` with the required privileges (possibly via `sudo`).
 
 ## Build C++ errors
 
-Symptôme: erreurs C++20 ou headers manquants.
-- Vérifiez la version du compilateur (`g++ --version`/`clang --version`).
-- Nettoyez et reconstruisez: supprimez `build/` puis refaites `conan install` + `cmake --preset` + `cmake --build`.
+Symptom: C++20 errors or missing headers.
+- Check the compiler version (`g++ --version`/`clang --version`).
+- Clean and rebuild: delete `build/` then redo `conan install` + `cmake --preset` + `cmake --build`.
 
 ## Raylib/display
 
-Symptôme: fenêtre n’apparaît pas ou crash.
-- Linux: assurez une session graphique (X11/Wayland). Installez X11 dev si nécessaire (Conan peut tenter de l’installer).
-- SSH: utilisez X11 forwarding ou lancez en local.
+Symptom: window doesn't appear or crashes.
+- Linux: ensure a graphical session (X11/Wayland). Install X11 dev if necessary (Conan may try to install it).
+- SSH: use X11 forwarding or run locally.
 
-## Réseau UDP
+## UDP networking
 
-Symptôme: pas de HelloAck / pas d’entités.
-- Vérifiez que le serveur tourne et écoute sur le bon port.
-- Désactivez temporairement le firewall local ou ouvrez le port UDP 4242.
-- Vérifiez l’adresse saisie dans le client (127.0.0.1 pour local).
+Symptom: no HelloAck / no entities.
+- Verify that the server is running and listening on the correct port.
+- Temporarily disable the local firewall or open UDP port 4242.
+- Verify the address entered in the client (127.0.0.1 for local).
 
-Symptôme: saccades/retards.
-- Nature de l’UDP; la latence et les pertes peuvent provoquer des sauts. Implémenter interpolation client ou réduction de payload pour améliorer.
+Symptom: stutters/delays.
+- Nature of UDP; latency and losses can cause jumps. Implement client interpolation or reduce payload to improve.
 
-## Version du protocole
+## Protocol version
 
-Symptôme: paquets ignorés.
-- Serveur et client doivent utiliser `ProtocolVersion = 1`. Si vous modifiez `Protocol.hpp`, rebuild des deux.
+Symptom: packets ignored.
+- Server and client must use `ProtocolVersion = 1`. If you modify `Protocol.hpp`, rebuild both.
 
-## Logs utiles
+## Useful logs
 
-- Serveur: affiche port/IP au démarrage; ajoutez des logs dans `UdpServer::handlePacket` pour diagnostiquer.
-- Client: `Screens::logMessage` imprime les étapes de connexion et erreurs receive.
+- Server: displays port/IP at startup; add logs in `UdpServer::handlePacket` for diagnosis.
+- Client: `Screens::logMessage` prints connection steps and receive errors.
