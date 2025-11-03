@@ -1,33 +1,33 @@
 # FAQ
 
-## Comment construire le projet ?
-Voir `docs/setup.md` et suivez le flux Conan + CMake (`conan install`, puis `cmake --preset` et `cmake --build`). Conan téléchargera raylib et asio automatiquement.
+## How do I build the project?
+See `docs/setup.md` and follow the Conan + CMake flow (`conan install`, then `cmake --preset` and `cmake --build`). Conan will download raylib and asio automatically.
 
-## Comment lancer le serveur et le client ?
-`make run-server` (port 4242) puis `make run-client`. Dans le client, renseignez 127.0.0.1:4242 en Multijoueur.
+## How do I run the server and client?
+`make run-server` (port 4242) then `make run-client`. In the client, enter 127.0.0.1:4242 in Multiplayer.
 
-## Le client ne reçoit pas d’état, que faire ?
-- Vérifiez que la version du protocole est la même (voir `Protocol.hpp`, version=1)
-- Désactivez le firewall local ou autorisez l’UDP sur le port 4242
-- Assurez-vous que le client a bien envoyé Hello et reçu HelloAck (voir logs client)
+## The client doesn't receive state, what should I do?
+- Verify that the protocol version is the same (see `Protocol.hpp`, version=1)
+- Disable the local firewall or allow UDP on port 4242
+- Ensure that the client has sent Hello and received HelloAck (see client logs)
 
-## Pourquoi UDP ?
-Faible latence et tolérance aux pertes légères. La fiabilité peut être ajoutée au-dessus si nécessaire.
+## Why UDP?
+Low latency and tolerance to light losses. Reliability can be added on top if necessary.
 
-## Le tir (Space) ne fait rien ?
-Le bit `InputShoot` est envoyé, mais le serveur n’a pas encore de logique de projectile. À venir.
+## Shooting (Space) does nothing?
+The `InputShoot` bit is sent, but the server doesn't have projectile logic yet. Coming soon.
 
-## Je vois des ennemis « sauter » ou disparaître
-Le serveur supprime les ennemis hors écran et diffuse des instantanés d’état. De petites saccades sont normales sans interpolation.
+## I see enemies "jumping" or disappearing
+The server removes off-screen enemies and broadcasts state snapshots. Small stutters are normal without interpolation.
 
-## Où est le protocole détaillé ?
-`docs/protocol.md` (messages, tailles, endianness, etc.).
+## Where is the detailed protocol?
+`docs/protocol.md` (messages, sizes, endianness, etc.).
 
-## Où est l’ECS et comment l’utiliser ?
-`src/engine/rt/ecs/*`. Le `Registry` permet de créer des entités et gérer des composants. Les systèmes exécutent une logique dans `update(dt)`.
+## Where is the ECS and how do I use it?
+`src/engine/rt/ecs/*`. The `Registry` allows creating entities and managing components. Systems execute logic in `update(dt)`.
 
-## Comment changer le port serveur ?
-Lancez `r-type_server <port>` ou modifiez la commande `run-server` dans le Makefile. Mettez à jour le port côté client.
+## How do I change the server port?
+Run `r-type_server <port>` or modify the `run-server` command in the Makefile. Update the port on the client side.
 
-## Windows/macOS sont-ils supportés ?
-Le projet est portable avec Conan + CMake. Raylib et asio sont cross-platform. Tests surtout sur Linux/macOS.
+## Are Windows/macOS supported?
+The project is portable with Conan + CMake. Raylib and asio are cross-platform. Tested mainly on Linux/macOS.
